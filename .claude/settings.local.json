@@ -4,7 +4,8 @@
       "Bash(go list:*)",
       "Bash(go doc:*)",
       "Bash(tree:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(go build:*)"
     ]
   }
 }

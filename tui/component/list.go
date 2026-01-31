@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
@@ -24,6 +25,9 @@ type ListModel struct {
 	// toolResults stores the content of tool messages keyed by ToolCallID
 	toolResults map[string]string
 
+	// markdownRenderer 用于渲染 Markdown 内容
+	markdownRenderer *glamour.TermRenderer
+
 	// 样式
 	userStyle       lipgloss.Style
 	assistantStyle  lipgloss.Style
@@ -39,68 +43,82 @@ func NewListModel() ListModel {
 	vp := viewport.New(30, 30)
 	vp.SetContent(`Welcome to the chat room!Type a message and press Enter to send.`)
 
-	// 初始化示例数据
-	messages := []adk.Message{
-		{
-			Role:    schema.System,
-			Content: "This is a TechTutor demo session.",
-		},
-		{
-			Role:    schema.User,
-			Content: "How do I search for 'golang'?",
-		},
-		{
-			Role:    schema.Assistant,
-			Content: "I will help you with that. Let me search for it.",
-			ToolCalls: []schema.ToolCall{
-				{
-					ID: "call_search_01",
-					Function: schema.FunctionCall{
-						Name:      "web_search",
-						Arguments: `{"query": "golang tutorial"}`,
-					},
-				},
-			},
-		},
-		{
-			Role:    schema.Assistant,
-			Content: "I'll also check local docs.",
-			ToolCalls: []schema.ToolCall{
-				{
-					ID: "call_search_02",
-					Function: schema.FunctionCall{
-						Name:      "search_knowledge",
-						Arguments: `{"query": "golang basics"}`,
-					},
-				},
-			},
-		},
+	// 初始化 Markdown 渲染器 (Dracula 主题)
+	markdownRenderer, err := glamour.NewTermRenderer(
+		glamour.WithStylePath("dracula"),
+		glamour.WithWordWrap(0), // 禁用自动换行，由 viewport 控制
+	)
+	if err != nil {
+		// 如果 dracula 主题失败，回退到 auto
+		markdownRenderer, _ = glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(0),
+		)
 	}
+
+	// 初始化示例数据
+	//messages := []adk.Message{
+	//	{
+	//		Role:    schema.System,
+	//		Content: "This is a TechTutor demo session.",
+	//	},
+	//	{
+	//		Role:    schema.User,
+	//		Content: "How do I search for 'golang'?",
+	//	},
+	//	{
+	//		Role:    schema.Assistant,
+	//		Content: "I will help you with that. Let me search for it.",
+	//		ToolCalls: []schema.ToolCall{
+	//			{
+	//				ID: "call_search_01",
+	//				Function: schema.FunctionCall{
+	//					Name:      "web_search",
+	//					Arguments: `{"query": "golang tutorial"}`,
+	//				},
+	//			},
+	//		},
+	//	},
+	//	{
+	//		Role:    schema.Assistant,
+	//		Content: "I'll also check local docs.",
+	//		ToolCalls: []schema.ToolCall{
+	//			{
+	//				ID: "call_search_02",
+	//				Function: schema.FunctionCall{
+	//					Name:      "search_knowledge",
+	//					Arguments: `{"query": "golang basics"}`,
+	//				},
+	//			},
+	//		},
+	//	},
+	//}
 
 	// 模拟已完成的工具结果
 	toolResults := make(map[string]string)
 	toolResults["call_search_01"] = `
-	Found 10 results for "golang tutorial":
-	1. A Tour of Go - https://tour.golang.org
-	2. Go by Example - https://gobyexample.com
-	...`
+Found 10 results for "golang tutorial":
+1. A Tour of Go - https://tour.golang.org
+2. Go by Example - https://gobyexample.com
+...`
 
 	// 注意：call_search_02 没有结果，将显示为 "Executing..."
 
 	return ListModel{
-		viewport:        vp,
-		messages:        messages,
-		toolResults:     toolResults,
-		width:           30,
-		height:          5,
-		ready:           true,
-		userStyle:       lipgloss.NewStyle().Foreground(lipgloss.Color("#7dcfff")).Bold(true),
-		assistantStyle:  lipgloss.NewStyle().Foreground(lipgloss.Color("#bb9af7")).Bold(true),
-		systemStyle:     lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89")).Italic(true),
-		toolStyle:       lipgloss.NewStyle().Foreground(lipgloss.Color("#9ece6a")),
-		toolNameStyle:   lipgloss.NewStyle().Foreground(lipgloss.Color("#e0af68")).Bold(true),
-		toolBorderStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89")).Faint(true),
-		indentStyle:     lipgloss.NewStyle().PaddingLeft(2),
+		viewport:         vp,
+		messages:         make([]adk.Message, 0),
+		toolResults:      toolResults,
+		markdownRenderer: markdownRenderer,
+		width:            30,
+		height:           5,
+		ready:            true,
+		userStyle:        lipgloss.NewStyle().Foreground(lipgloss.Color("#7dcfff")).Bold(true),
+		assistantStyle:   lipgloss.NewStyle().Foreground(lipgloss.Color("#bb9af7")).Bold(true),
+		systemStyle:      lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89")).Italic(true),
+		toolStyle:        lipgloss.NewStyle().Foreground(lipgloss.Color("#9ece6a")),
+		toolNameStyle:    lipgloss.NewStyle().Foreground(lipgloss.Color("#e0af68")).Bold(true),
+		toolBorderStyle:  lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89")).Faint(true),
+		indentStyle:      lipgloss.NewStyle().PaddingLeft(2),
 	}
 }
 
@@ -226,11 +244,26 @@ func (m *ListModel) renderMessage(msg adk.Message) string {
 	}
 }
 
+// renderMarkdown 渲染 Markdown 内容
+func (m *ListModel) renderMarkdown(content string) string {
+	if m.markdownRenderer == nil {
+		return content
+	}
+	rendered, err := m.markdownRenderer.Render(content)
+	if err != nil {
+		// 渲染失败，返回原始内容
+		return content
+	}
+	// 去除首尾空白（glamour 会添加前后换行）
+	return strings.TrimSpace(rendered)
+}
+
 // renderUserMessage 渲染用户消息
 func (m *ListModel) renderUserMessage(msg adk.Message) string {
 	if msg.Content == "" {
 		return ""
 	}
+	// 用户消息通常不需要 Markdown 渲染，保持原始文本
 	return m.userStyle.Render("User:") + " " + msg.Content
 }
 
@@ -238,10 +271,11 @@ func (m *ListModel) renderUserMessage(msg adk.Message) string {
 func (m *ListModel) renderAssistantMessage(msg adk.Message) string {
 	var parts []string
 
-	// 渲染文本内容
+	// 渲染文本内容（支持 Markdown）
 	if msg.Content != "" {
 		header := m.assistantStyle.Render("Assistant:")
-		parts = append(parts, header+" "+msg.Content)
+		renderedContent := m.renderMarkdown(msg.Content)
+		parts = append(parts, header+"\n"+renderedContent)
 	}
 
 	// 渲染工具调用
@@ -317,18 +351,21 @@ func (m *ListModel) renderToolCall(tc schema.ToolCall, index int) string {
 
 	// 尝试从 map 中查找结果
 	if result, ok := m.toolResults[tc.ID]; ok {
-		// 渲染结果
-		// 截断过长结果
+		// 渲染结果（工具结果也支持 Markdown）
 		maxLen := 500
+		displayResult := result
 		if len(result) > maxLen {
-			result = result[:maxLen] + "..."
+			displayResult = result[:maxLen] + "..."
 		}
+
+		// 对工具结果也进行 Markdown 渲染
+		renderedResult := m.renderMarkdown(displayResult)
 
 		resultHeader := m.indentStyle.Render(m.toolBorderStyle.Render("├─ ") + m.toolStyle.Render("Result:"))
 		parts = append(parts, resultHeader)
 
 		resultBody := m.indentStyle.Render(
-			m.toolBorderStyle.Render("│  ") + result,
+			m.toolBorderStyle.Render("│  ") + renderedResult,
 		)
 		parts = append(parts, resultBody)
 
