@@ -14,14 +14,22 @@ import (
 	"github.com/cloudwego/eino/components/tool/utils"
 )
 
-var (
+const (
+	// BashToolName is the name of the bash tool
 	BashToolName = "bash"
+
+	// DefaultTimeoutMs is the default timeout for command execution
+	DefaultTimeoutMs = 30000
+	// MaxTimeoutMs is the maximum allowed timeout
+	MaxTimeoutMs = 300000
+	// MaxOutputLength is the maximum output length before truncation
+	MaxOutputLength = 10000
 )
 
 // BashToolParams contains parameters for the bash (PowerShell) tool.
 type BashToolParams struct {
-	Command   string `json:"command" jsonschema:"description=PowerShell command to run, e.g., 'Get-ChildItem', 'Get-Location', 'Get-Content file.txt'"`
-	TimeoutMs uint64 `json:"timeout_ms,omitempty" jsonschema:"description=Timeout in milliseconds (default: 30000ms, max: 300000ms)"`
+	Command   string `json:"command" jsonschema:"description=PowerShell command to execute."`
+	TimeoutMs uint64 `json:"timeout_ms,omitempty" jsonschema:"description=Timeout in milliseconds (default: 30000, max: 300000)."`
 }
 
 // dangerousCommands is a blacklist of dangerous PowerShell commands.
@@ -35,29 +43,63 @@ var dangerousCommands = []string{
 	"Remove-ADDomainController",
 }
 
-// BashToolFunc executes a PowerShell command.
+// bashDescription is the detailed tool description for the AI
+const bashDescription = `Execute PowerShell commands in a Windows environment.
+
+BEFORE USING:
+1. Verify the command is safe before execution
+2. Use absolute paths when working with files
+3. For file operations, prefer using dedicated tools (read_file, write_file, edit_file)
+
+CAPABILITIES:
+- Run any PowerShell command
+- Get system information (Get-Process, Get-Service, etc.)
+- List files and directories (Get-ChildItem, Get-Location)
+- Run build commands (go build, npm install, etc.)
+- Git operations (git status, git log, etc.)
+
+SECURITY:
+- Dangerous system commands are blocked
+- Commands with destructive potential will be rejected
+
+PARAMETERS:
+- command (required): The PowerShell command to execute
+- timeout_ms (optional): Timeout in milliseconds (default: 30000, max: 300000)
+
+OUTPUT FORMAT:
+Returns command output with execution metadata including duration and exit code.
+
+EXAMPLES:
+- List files: {"command": "Get-ChildItem"}
+- Get processes: {"command": "Get-Process | Select-Object -First 5"}
+- Current directory: {"command": "Get-Location"}`
+
+// BashToolFunc executes a PowerShell command with structured response.
 func BashToolFunc(ctx context.Context, params BashToolParams) (string, error) {
 	command := strings.TrimSpace(params.Command)
 	if command == "" {
-		return "", fmt.Errorf("command cannot be empty")
+		return Error("command cannot be empty")
 	}
 
+	// Security check
 	for _, dangerous := range dangerousCommands {
 		if strings.Contains(command, dangerous) {
-			return "Warning: Potentially dangerous command detected. Execution blocked for safety.", nil
+			return Error(fmt.Sprintf("dangerous command detected and blocked: %s", dangerous))
 		}
 	}
 
+	// Validate and set timeout
 	timeoutMs := params.TimeoutMs
 	if timeoutMs == 0 {
-		timeoutMs = 30000
+		timeoutMs = DefaultTimeoutMs
 	}
-	if timeoutMs > 300000 {
-		timeoutMs = 300000
+	if timeoutMs > MaxTimeoutMs {
+		timeoutMs = MaxTimeoutMs
 	}
 
 	timeout := time.Duration(timeoutMs) * time.Millisecond
 
+	// Execute command
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -71,41 +113,67 @@ func BashToolFunc(ctx context.Context, params BashToolParams) (string, error) {
 	err := cmd.Run()
 	duration := time.Since(startTime)
 
-	output := stdout.String()
-	errOutput := stderr.String()
+	stdoutStr := stdout.String()
+	stderrStr := stderr.String()
 
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Command: %s\n", command))
-	result.WriteString(fmt.Sprintf("Duration: %v\n", duration))
+	// Build output
+	var output []string
 
+	// Check for timeout
+	if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
+		return Partial(fmt.Sprintf("Command timed out after %v\n\nPartial output:\n%s",
+			timeout, truncateOutput(stdoutStr)), &Metadata{
+			Command:  command,
+			Duration: duration.Milliseconds(),
+			Timeout:  true,
+		})
+	}
+
+	// Build result content
+	if stdoutStr != "" {
+		output = append(output, truncateOutput(stdoutStr))
+	}
+
+	exitCode := 0
 	if err != nil {
-		if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
-			result.WriteString(fmt.Sprintf("\nTimeout after %v", timeout))
-		} else {
-			result.WriteString(fmt.Sprintf("\nError: %v", err))
+		exitCode = 1
+		if stderrStr != "" {
+			output = append(output, fmt.Sprintf("stderr: %s", truncateOutput(stderrStr)))
 		}
+		// Don't include the error message for exit code, just metadata
 	}
 
-	if output != "" {
-		result.WriteString(fmt.Sprintf("\nOutput:%s", output))
-	}
-	if errOutput != "" {
-		result.WriteString(fmt.Sprintf("\nStderr:%s", errOutput))
+	// No output case
+	if len(output) == 0 {
+		output = append(output, "Command completed with no output")
 	}
 
-	if output == "" && errOutput == "" && err == nil {
-		result.WriteString("\nCommand completed successfully with no output")
-	}
-
-	return result.String(), nil
+	return SuccessWithCommand(
+		strings.Join(output, "\n"),
+		command,
+		duration.Milliseconds(),
+		exitCode,
+	)
 }
 
-// GetBashTool returns the PowerShell tool.
+// truncateOutput truncates output if it exceeds MaxOutputLength
+func truncateOutput(s string) string {
+	if len(s) <= MaxOutputLength {
+		return s
+	}
+	half := MaxOutputLength / 2
+	truncated := len(s) - MaxOutputLength
+	return fmt.Sprintf("%s\n\n... [~%d chars truncated] ...\n\n%s",
+		s[:half], truncated, s[len(s)-half:])
+}
+
+// GetBashTool returns the PowerShell tool with enhanced description.
 func GetBashTool() tool.InvokableTool {
 	bashTool, err := utils.InferTool(
-		"powershell",
-		"Execute PowerShell commands like 'Get-ChildItem', 'Get-Location', 'Get-Content file.txt'. Returns command output, duration, and any errors.",
-		BashToolFunc)
+		BashToolName,
+		bashDescription,
+		BashToolFunc,
+	)
 	if err != nil {
 		log.Fatal(err)
 	}

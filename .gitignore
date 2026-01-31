@@ -1,0 +1,39 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+cowork-agent
+test_tutor.exe
+
+# Test files
+test_*.go
+*_test.go
+
+# IDE and Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# Study notes
+*_notes.md
+study_notes.md
+
+# Environment files
+.env
+.env.local
+
+# Build artifacts
+*.o
+*.a
+
+# Go specific
+vendor/

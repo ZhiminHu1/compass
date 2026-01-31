@@ -13,18 +13,57 @@ import (
 	"github.com/cloudwego/eino/components/tool/utils"
 )
 
-var (
-	GlobToolName = "Glob"
+const (
+	// GlobToolName is the name of the glob tool
+	GlobToolName = "glob"
+
+	// DefaultMaxResults is the default maximum number of results
+	DefaultMaxResults = 100
+	// MaxMaxResults is the maximum allowed results
+	MaxMaxResults = 1000
 )
 
 // GlobToolParams contains parameters for the glob tool.
 type GlobToolParams struct {
-	Pattern string `json:"pattern" jsonschema:"description=The glob pattern to match files (e.g., *.go, **/*.json)"`
-	Path    string `json:"path,omitempty" jsonschema:"description=The directory to search in (defaults to current working directory)"`
+	Pattern    string `json:"pattern" jsonschema:"description=The glob pattern to match files (e.g., *.go, **/*.json)"`
+	Path       string `json:"path,omitempty" jsonschema:"description=The directory to search in (defaults to current working directory)"`
+	MaxResults int    `json:"max_results,omitempty" jsonschema:"description=Maximum number of results to return (default: 100, max: 1000)"`
 }
 
-// GlobToolFunc executes the glob search.
-func GlobToolFunc(_ context.Context, params *GlobToolParams) (string, error) {
+// globDescription is the detailed tool description for the AI
+const globDescription = `Match and list filesystem paths using wildcard patterns.
+
+BEFORE USING:
+- Use this tool to discover files before reading or editing them
+- Check the current directory structure first
+
+CAPABILITIES:
+- Match files by name pattern (*.go, *.md, etc.)
+- Recursive search with ** pattern
+- Search in specific directories
+- Returns relative paths from the search directory
+
+SUPPORTED PATTERNS:
+- *.go           - Match Go files in current directory
+- **/*.go         - Match Go files recursively
+- test_*.go       - Match Go files starting with test_
+- **/*.{go,md}    - Match .go and .md files recursively
+
+PARAMETERS:
+- pattern (required): The glob pattern to match files
+- path (optional): Directory to search in (default: current directory)
+- max_results (optional): Maximum results (default: 100, max: 1000)
+
+OUTPUT FORMAT:
+Returns a list of matching file paths, one per line.
+
+EXAMPLES:
+- Find Go files: {"pattern": "*.go"}
+- Find all Markdown: {"pattern": "**/*.md"}
+- Find test files: {"pattern": "**/*_test.go"}`
+
+// GlobToolFunc executes the glob search with structured response.
+func GlobToolFunc(_ context.Context, params GlobToolParams) (string, error) {
 	searchPath := params.Path
 	if searchPath == "" {
 		searchPath = "."
@@ -32,24 +71,40 @@ func GlobToolFunc(_ context.Context, params *GlobToolParams) (string, error) {
 
 	absPath, err := filepath.Abs(searchPath)
 	if err != nil {
-		return "", fmt.Errorf("invalid path: %w", err)
+		return Error(fmt.Sprintf("invalid path: %v", err))
 	}
 
 	info, err := os.Stat(absPath)
 	if err != nil {
-		return "", fmt.Errorf("directory not found: %w", err)
+		return Error(fmt.Sprintf("directory not found: %v", err))
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("path is not a directory")
+		return Error("path is not a directory")
 	}
 
 	pattern := filepath.Join(absPath, params.Pattern)
 	matches, err := doublestar.FilepathGlob(pattern)
 	if err != nil {
-		return "", fmt.Errorf("glob matching failed: %w", err)
+		return Error(fmt.Sprintf("glob matching failed: %v", err))
 	}
+
 	if len(matches) == 0 {
-		return "No matches found", nil
+		return Success("No matches found", &Metadata{MatchCount: 0})
+	}
+
+	// Apply max results limit
+	maxResults := params.MaxResults
+	if maxResults <= 0 {
+		maxResults = DefaultMaxResults
+	}
+	if maxResults > MaxMaxResults {
+		maxResults = MaxMaxResults
+	}
+
+	truncated := false
+	if len(matches) > maxResults {
+		matches = matches[:maxResults]
+		truncated = true
 	}
 
 	var relPaths []string
@@ -61,14 +116,22 @@ func GlobToolFunc(_ context.Context, params *GlobToolParams) (string, error) {
 		relPaths = append(relPaths, rel)
 	}
 
-	return fmt.Sprintf("Found %d matching files:\n%s", len(relPaths), strings.Join(relPaths, "\n")), nil
+	content := strings.Join(relPaths, "\n")
+	if truncated {
+		content += fmt.Sprintf("\n\n... (showing first %d of %d matches)",
+			maxResults, maxResults)
+	}
+
+	return Success(content, &Metadata{
+		MatchCount: len(matches),
+	})
 }
 
-// GetGlobTool returns the glob tool.
+// GetGlobTool returns the glob tool with enhanced description.
 func GetGlobTool() tool.InvokableTool {
 	globTool, err := utils.InferTool(
-		"glob",
-		"Match and list filesystem paths using wildcard patterns (e.g., *.py, **/*.json) within a specified directory.",
+		GlobToolName,
+		globDescription,
 		GlobToolFunc,
 	)
 	if err != nil {

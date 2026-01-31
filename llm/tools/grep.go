@@ -3,7 +3,6 @@ package tools
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -15,8 +14,14 @@ import (
 	"github.com/cloudwego/eino/components/tool/utils"
 )
 
-var (
+const (
+	// GrepToolName is the name of the grep tool
 	GrepToolName = "grep"
+
+	// DefaultMaxMatches is the default maximum number of matches
+	DefaultMaxMatches = 100
+	// MaxMaxMatches is the maximum allowed matches
+	MaxMaxMatches = 500
 )
 
 // GrepToolParams contains parameters for the grep tool.
@@ -26,6 +31,32 @@ type GrepToolParams struct {
 	MaxMatches int      `json:"max_matches,omitempty" jsonschema:"description=Maximum number of matches to return (default: 100)"`
 }
 
+// grepDescription is the detailed tool description for the AI
+const grepDescription = `Search file contents using regular expressions to find specific patterns.
+
+BEFORE USING:
+- Use the glob tool to find files first if you don't know the exact paths
+- For large codebases, consider limiting the search scope
+
+CAPABILITIES:
+- Search for text patterns across multiple files
+- Supports full regular expression syntax
+- Returns file path, line number, and matching content
+- Case-sensitive by default (use (?i) flag for case-insensitive)
+
+PARAMETERS:
+- pattern (required): The regex pattern to search for
+- files (required): List of file paths to search in
+- max_matches (optional): Maximum number of matches (default: 100, max: 500)
+
+OUTPUT FORMAT:
+Returns matching lines with file paths and line numbers, grouped by file.
+
+EXAMPLES:
+- Find function definitions: {"pattern": "func\s+\w+\(", "files": ["*.go"]}
+- Case-insensitive search: {"pattern": "(?i)error", "files": ["main.go"]}
+- Find TODO comments: {"pattern": "TODO|FIXME", "files": ["*.go", "*.js"]}`
+
 // GrepMatch represents a single grep result.
 type GrepMatch struct {
 	File    string
@@ -33,26 +64,30 @@ type GrepMatch struct {
 	Content string
 }
 
-// GrepToolFunc executes the grep search.
+// GrepToolFunc executes the grep search with structured response.
 func GrepToolFunc(ctx context.Context, params GrepToolParams) (string, error) {
 	if params.Pattern == "" {
-		return "", errors.New("pattern is required")
+		return Error("pattern parameter is required")
 	}
 
 	re, err := regexp.Compile(params.Pattern)
 	if err != nil {
-		return "", fmt.Errorf("invalid regex pattern: %w", err)
+		return Error(fmt.Sprintf("invalid regex pattern: %v", err))
 	}
 
 	maxMatches := params.MaxMatches
 	if maxMatches <= 0 {
-		maxMatches = 100
+		maxMatches = DefaultMaxMatches
+	}
+	if maxMatches > MaxMaxMatches {
+		maxMatches = MaxMaxMatches
 	}
 
 	if len(params.Files) == 0 {
-		return "", fmt.Errorf("files parameter is required")
+		return Error("files parameter is required")
 	}
 
+	// Convert to absolute paths and validate
 	absFiles := make([]string, 0, len(params.Files))
 	for _, f := range params.Files {
 		absPath, err := filepath.Abs(f)
@@ -65,9 +100,10 @@ func GrepToolFunc(ctx context.Context, params GrepToolParams) (string, error) {
 	}
 
 	if len(absFiles) == 0 {
-		return "No valid files to search", nil
+		return Error("no valid files to search")
 	}
 
+	// Search files
 	var matches []GrepMatch
 	for _, file := range absFiles {
 		if len(matches) >= maxMatches {
@@ -76,36 +112,28 @@ func GrepToolFunc(ctx context.Context, params GrepToolParams) (string, error) {
 
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return Partial("search cancelled", &Metadata{MatchCount: len(matches)})
 		default:
+			fileMatches, err := searchFile(file, re, maxMatches-len(matches))
+			if err == nil {
+				matches = append(matches, fileMatches...)
+			}
 		}
-
-		fileMatches, err := searchFile(file, re, maxMatches-len(matches))
-		if err != nil {
-			continue
-		}
-		matches = append(matches, fileMatches...)
 	}
 
 	if len(matches) == 0 {
-		return fmt.Sprintf("No matches found for pattern '%s'", params.Pattern), nil
+		return Success(fmt.Sprintf("No matches found for pattern '%s'", params.Pattern),
+			&Metadata{MatchCount: 0})
 	}
 
+	// Format results
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Found %d matches for pattern '%s':\n\n", len(matches), params.Pattern))
-
-	baseDir := "."
-	if len(absFiles) > 0 {
-		baseDir = filepath.Dir(absFiles[0])
-		if len(absFiles) > 1 {
-			baseDir = findCommonDir(absFiles)
-		}
-	}
-
+	baseDir := findCommonDir(absFiles)
 	currentFile := ""
+
 	for _, m := range matches {
 		relPath, _ := filepath.Rel(baseDir, m.File)
-		if relPath == "" {
+		if relPath == "." {
 			relPath = filepath.Base(m.File)
 		}
 
@@ -123,7 +151,15 @@ func GrepToolFunc(ctx context.Context, params GrepToolParams) (string, error) {
 		sb.WriteString(fmt.Sprintf("\n... (showing first %d matches)\n", maxMatches))
 	}
 
-	return sb.String(), nil
+	var files []string
+	for _, f := range absFiles {
+		files = append(files, filepath.Base(f))
+	}
+
+	return Success(sb.String(), &Metadata{
+		MatchCount: len(matches),
+		Files:      files,
+	})
 }
 
 // findCommonDir finds the common parent directory of multiple files.
@@ -172,11 +208,11 @@ func searchFile(path string, re *regexp.Regexp, limit int) ([]GrepMatch, error) 
 	return matches, scanner.Err()
 }
 
-// GetGrepTool returns the grep tool.
+// GetGrepTool returns the grep tool with enhanced description.
 func GetGrepTool() tool.InvokableTool {
 	grepTool, err := utils.InferTool(
-		"grep",
-		"Search file contents using regular expressions. Returns matching lines with file paths and line numbers.",
+		GrepToolName,
+		grepDescription,
 		GrepToolFunc,
 	)
 	if err != nil {

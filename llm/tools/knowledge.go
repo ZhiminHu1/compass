@@ -11,6 +11,16 @@ import (
 	"github.com/cloudwego/eino/components/tool/utils"
 )
 
+const (
+	// KnowledgeToolName is the name of the knowledge base tool
+	KnowledgeToolName = "search_knowledge"
+
+	// DefaultTopK is the default number of results to return
+	DefaultTopK = 5
+	// MaxTopK is the maximum allowed results
+	MaxTopK = 10
+)
+
 var (
 	globalVectorStore *vectorstore.VectorStore
 )
@@ -22,67 +32,99 @@ func InitKnowledgeTool(vs *vectorstore.VectorStore) {
 
 // KnowledgeToolParams defines parameters for knowledge base search
 type KnowledgeToolParams struct {
-	Query string `json:"query" jsonschema:"description=要查询的内容"`
-	TopK  int    `json:"top_k,omitempty" jsonschema:"description=返回结果数量，默认5，范围1-10"`
+	Query string `json:"query" jsonschema:"description=The query to search for in the knowledge base"`
+	TopK  int    `json:"top_k,omitempty" jsonschema:"description=Number of results to return (default: 5, max: 10)"`
 }
+
+// knowledgeDescription is the detailed tool description for the AI
+const knowledgeDescription = `Search the local knowledge base for relevant information.
+
+BEFORE USING:
+- Try this tool first for historical research content
+- Fall back to web_search for real-time information
+- Use specific, focused queries
+
+CAPABILITIES:
+- Semantic search across stored documents
+- Returns ranked results with relevance scores
+- Best for research notes, documentation, and cached content
+
+PARAMETERS:
+- query (required): The question or topic to search for
+- top_k (optional): Number of results (default: 5, max: 10)
+
+OUTPUT FORMAT:
+Returns ranked results with relevance scores and content.
+
+EXAMPLES:
+- Search topic: {"query": "Go design patterns"}
+- Find concept: {"query": "singleton pattern implementation"}
+- Quick lookup: {"query": "goroutine best practices"}`
 
 // KnowledgeToolFunc searches the knowledge base for relevant information
 func KnowledgeToolFunc(ctx context.Context, params KnowledgeToolParams) (string, error) {
 	if globalVectorStore == nil {
-		return "知识库未初始化。", nil
+		return Error("knowledge base is not initialized")
 	}
 
 	if params.Query == "" {
-		return "", fmt.Errorf("query 参数不能为空")
+		return Error("query parameter is required")
 	}
 
 	topK := params.TopK
 	if topK <= 0 {
-		topK = 5
+		topK = DefaultTopK
 	}
-	if topK > 10 {
-		topK = 10
+	if topK > MaxTopK {
+		topK = MaxTopK
 	}
 
 	// Search the knowledge base
 	results, err := globalVectorStore.Search(ctx, params.Query, topK)
 	if err != nil {
-		return "", fmt.Errorf("知识库搜索失败: %w", err)
+		return Error(fmt.Sprintf("knowledge base search failed: %v", err))
 	}
 
 	if len(results) == 0 {
-		return "知识库中未找到相关内容。建议使用 web_search 工具搜索最新信息。", nil
+		return Success("No relevant content found in the knowledge base. Try using web_search for current information.",
+			&Metadata{MatchCount: 0})
 	}
 
 	// Format results
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("从知识库找到 %d 条相关结果:\n\n", len(results)))
+	sb.WriteString(fmt.Sprintf("Found %d relevant results in knowledge base:\n\n", len(results)))
 
 	for i, result := range results {
-		sb.WriteString(fmt.Sprintf("--- 结果 %d (相关度: %.2f) ---\n", i+1, result.Score))
+		sb.WriteString(fmt.Sprintf("--- Result %d (score: %.2f) ---\n", i+1, result.Score))
 		sb.WriteString(result.Document.Content)
-		sb.WriteString("\n\n")
+		sb.WriteString("\n")
 
-		// Add metadata info if available
+		// Add metadata if available
 		if result.Document.Metadata != nil {
+			var meta []string
 			if source, ok := result.Document.Metadata["source"].(string); ok && source != "" {
-				sb.WriteString(fmt.Sprintf("来源: %s", source))
+				meta = append(meta, fmt.Sprintf("source: %s", source))
 			}
 			if timestamp, ok := result.Document.Metadata["timestamp"].(string); ok && timestamp != "" {
-				sb.WriteString(fmt.Sprintf(" | 时间: %s", timestamp))
+				meta = append(meta, fmt.Sprintf("time: %s", timestamp))
 			}
-			sb.WriteString("\n")
+			if len(meta) > 0 {
+				sb.WriteString(fmt.Sprintf("[metadata: %s]", strings.Join(meta, ", ")))
+			}
 		}
+		sb.WriteString("\n")
 	}
 
-	return sb.String(), nil
+	return Success(sb.String(), &Metadata{
+		MatchCount: len(results),
+	})
 }
 
-// GetKnowledgeTool returns the knowledge base search tool
+// GetKnowledgeTool returns the knowledge base search tool with enhanced description
 func GetKnowledgeTool() tool.InvokableTool {
 	t, err := utils.InferTool(
-		"search_knowledge",
-		"在本地知识库中搜索相关信息。优先使用此工具查询历史研究内容。如果知识库中没有相关内容，再使用 web_search。",
+		KnowledgeToolName,
+		knowledgeDescription,
 		KnowledgeToolFunc,
 	)
 	if err != nil {

@@ -15,8 +15,16 @@ import (
 	"github.com/cloudwego/eino/components/tool/utils"
 )
 
-var (
+const (
+	// FetchToolName is the name of the fetch tool
 	FetchToolName = "fetch"
+
+	// DefaultTimeout is the default request timeout
+	DefaultTimeout = 30
+	// MaxTimeout is the maximum allowed timeout
+	MaxTimeout = 120
+	// MaxReadSize is the maximum response size (5MB)
+	MaxReadSize = int64(5 * 1024 * 1024)
 )
 
 // FetchToolParams defines the arguments for the FetchTool.
@@ -26,15 +34,46 @@ type FetchToolParams struct {
 	Timeout int    `json:"timeout,omitempty" jsonschema:"description=Optional timeout in seconds (default: 30, max: 120)"`
 }
 
+// fetchDescription is the detailed tool description for the AI
+const fetchDescription = `Fetch content from a URL and convert it to text, markdown, or HTML.
+
+BEFORE USING:
+- Verify the URL is accessible
+- Prefer markdown format for better readability
+- Consider timeout for large pages
+
+CAPABILITIES:
+- Fetch web pages and extract content
+- Convert HTML to readable text or markdown
+- Handle redirects automatically
+- Size limit: 5MB
+
+SUPPORTED FORMATS:
+- text:     Plain text extraction (default)
+- markdown: HTML converted to markdown
+- html:     Raw HTML content
+
+PARAMETERS:
+- url (required): The URL to fetch (must start with http:// or https://)
+- format (optional): Output format - text, markdown, or html (default: text)
+- timeout (optional): Timeout in seconds (default: 30, max: 120)
+
+OUTPUT FORMAT:
+Returns the fetched and formatted content.
+
+EXAMPLES:
+- Fetch as markdown: {"url": "https://example.com", "format": "markdown"}
+- Quick text: {"url": "https://example.com", "format": "text"}
+- With timeout: {"url": "https://example.com", "timeout": 60}`
+
 // FetchToolFunc implements the logic for fetching and converting web content.
-// It includes safety mechanisms like timeouts and size limits.
 func FetchToolFunc(ctx context.Context, params FetchToolParams) (string, error) {
 	// 1. Validation
 	if params.URL == "" {
-		return "", fmt.Errorf("URL parameter is required")
+		return Error("URL parameter is required")
 	}
 	if !strings.HasPrefix(params.URL, "http://") && !strings.HasPrefix(params.URL, "https://") {
-		return "", fmt.Errorf("URL must start with http:// or https://")
+		return Error("URL must start with http:// or https://")
 	}
 
 	format := strings.ToLower(params.Format)
@@ -42,16 +81,16 @@ func FetchToolFunc(ctx context.Context, params FetchToolParams) (string, error) 
 		format = "text"
 	}
 	if format != "text" && format != "markdown" && format != "html" {
-		return "", fmt.Errorf("format must be one of: text, markdown, html")
+		return Error("format must be one of: text, markdown, html")
 	}
 
-	// 2. Setup Client with Timeout Safety
+	// 2. Setup Client with Timeout
 	timeout := params.Timeout
 	if timeout <= 0 {
-		timeout = 30 // Default 30s
+		timeout = DefaultTimeout
 	}
-	if timeout > 120 {
-		timeout = 120 // Hard limit 120s
+	if timeout > MaxTimeout {
+		timeout = MaxTimeout
 	}
 
 	client := &http.Client{
@@ -61,37 +100,35 @@ func FetchToolFunc(ctx context.Context, params FetchToolParams) (string, error) 
 	// 3. Prepare Request
 	req, err := http.NewRequestWithContext(ctx, "GET", params.URL, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return Error(fmt.Sprintf("failed to create request: %v", err))
 	}
-	req.Header.Set("User-Agent", "opencode-fetch-tool/1.0")
+	req.Header.Set("User-Agent", "cowork-agent-fetch-tool/1.0")
 
 	// 4. Execute Request
+	startTime := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch URL: %w", err)
+		return Error(fmt.Sprintf("failed to fetch URL: %v", err))
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("request failed with status code: %d", resp.StatusCode)
-	}
-
-	// 5. Read Body with Size Limit Safety (Max 5MB)
-	MaxReadSize := int64(5 * 1024 * 1024)
-
+	// 5. Read Body with Size Limit
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxReadSize))
 	if err != nil {
-		return "", fmt.Errorf("failed to read response body: %w", err)
+		return Error(fmt.Sprintf("failed to read response: %v", err))
 	}
+
 	content := string(bodyBytes)
+	truncated := int64(len(content)) >= MaxReadSize
+
 	// 6. Format Conversion
 	contentType := resp.Header.Get("Content-Type")
-	switch params.Format {
+	switch format {
 	case "text":
 		if strings.Contains(contentType, "text/html") {
 			text, err := extractTextFromHTML(content)
 			if err != nil {
-				return "", fmt.Errorf("Failed to extract text from HTML: " + err.Error())
+				return Error(fmt.Sprintf("failed to extract text: %v", err))
 			}
 			content = text
 		}
@@ -100,37 +137,44 @@ func FetchToolFunc(ctx context.Context, params FetchToolParams) (string, error) 
 		if strings.Contains(contentType, "text/html") {
 			markdown, err := convertHTMLToMarkdown(content)
 			if err != nil {
-				return "", fmt.Errorf("Failed to convert HTML to Markdown: %s" + err.Error())
+				return Error(fmt.Sprintf("failed to convert to markdown: %v", err))
 			}
 			content = markdown
 		}
 
-		content = "```\n" + content + "\n```"
-
 	case "html":
-		// return only the body of the HTML document
 		if strings.Contains(contentType, "text/html") {
 			doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
 			if err != nil {
-				return "", fmt.Errorf("Failed to parse HTML: " + err.Error())
+				return Error(fmt.Sprintf("failed to parse HTML: %v", err))
 			}
 			body, err := doc.Find("body").Html()
-			if err != nil {
-				return "", fmt.Errorf("Failed to extract body from HTML: " + err.Error())
+			if err == nil && body != "" {
+				content = "<html>\n<body>\n" + body + "\n</body>\n</html>"
 			}
-			if body == "" {
-				return "", fmt.Errorf("no body content found in HTML")
-			}
-			content = "<html>\n<body>\n" + body + "\n</body>\n</html>"
 		}
 	}
-	// truncate content if it exceeds max read size
-	if int64(len(content)) > MaxReadSize {
-		content = content[:MaxReadSize]
+
+	if truncated {
 		content += fmt.Sprintf("\n\n[Content truncated to %d bytes]", MaxReadSize)
 	}
 
-	return content, nil
+	duration := time.Since(startTime)
+
+	if resp.StatusCode != http.StatusOK {
+		return Partial(content, &Metadata{
+			URL:        params.URL,
+			StatusCode: resp.StatusCode,
+			Duration:   duration.Milliseconds(),
+		})
+	}
+
+	return Success(content, &Metadata{
+		URL:        params.URL,
+		StatusCode: resp.StatusCode,
+		ByteCount:  len(bodyBytes),
+		Duration:   duration.Milliseconds(),
+	})
 }
 
 func extractTextFromHTML(html string) (string, error) {
@@ -141,7 +185,6 @@ func extractTextFromHTML(html string) (string, error) {
 
 	text := doc.Find("body").Text()
 	text = strings.Join(strings.Fields(text), " ")
-
 	return text, nil
 }
 
@@ -152,7 +195,7 @@ func convertHTMLToMarkdown(html string) (string, error) {
 		return "", err
 	}
 
-	// 1. 去除多余空行
+	// Clean up excessive blank lines
 	lines := strings.Split(markdown, "\n")
 	var result []string
 	for _, line := range lines {
@@ -161,15 +204,14 @@ func convertHTMLToMarkdown(html string) (string, error) {
 		}
 	}
 
-	// 2. 用单个空格连接（去除多余空格）
-	return strings.Join(result, " "), nil
+	return strings.Join(result, "\n"), nil
 }
 
-// GetFetchTool returns the Eino InvokableTool construction.
+// GetFetchTool returns the fetch tool with enhanced description.
 func GetFetchTool() tool.InvokableTool {
 	t, err := utils.InferTool(
-		"fetch_web_content",
-		"Fetches content from a URL and converts it to text, markdown, or keeps it as HTML. Useful for reading documentation or external web pages.",
+		FetchToolName,
+		fetchDescription,
 		FetchToolFunc,
 	)
 	if err != nil {
