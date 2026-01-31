@@ -4,15 +4,19 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"cowork-agent/llm/providers"
 	"cowork-agent/llm/tools"
 	"cowork-agent/pubsub"
 
+	clc "github.com/cloudwego/eino-ext/callbacks/cozeloop"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
+	"github.com/coze-dev/cozeloop-go"
 )
 
 // Runtime Agent 运行时
@@ -23,6 +27,7 @@ type Runtime struct {
 	broker     *pubsub.Broker[adk.Message]
 	ctx        context.Context
 	cancelFunc context.CancelFunc
+	cozeClient cozeloop.Client // Coze Loop 观测客户端（interface，不是指针）
 }
 
 // NewRuntime 创建新的 Agent 运行时
@@ -42,7 +47,7 @@ func NewRuntime(ctx context.Context, chatModel model.ToolCallingChatModel, tools
 		EnableStreaming: false, // 非流式
 	})
 
-	// 创建事件 Broker
+	// 创建消息 Broker
 	broker := pubsub.NewBroker[adk.Message]()
 
 	// 创建上下文
@@ -70,8 +75,7 @@ func (r *Runtime) Run(userPrompt string) error {
 	if err := r.store.Add(r.ctx, userMsg); err != nil {
 		return fmt.Errorf("存储用户消息失败: %w", err)
 	}
-
-	// 发布用户消息创建事件
+	// 发布消息
 	r.broker.Publish(pubsub.CreatedEvent, userMsg)
 
 	// 获取历史消息
@@ -83,20 +87,21 @@ func (r *Runtime) Run(userPrompt string) error {
 	// 运行 Agent
 	iter := r.runner.Run(r.ctx, history)
 
-	// 处理事件
+	// 处理事件并发布消息
 	for {
 		event, ok := iter.Next()
 		if !ok {
 			break
 		}
-		r.handleEvent(event)
+		r.handleAgentEvent(event)
 	}
+	r.broker.Publish(pubsub.FinishedEvent, nil)
 
 	return nil
 }
 
-// handleEvent 处理 Agent 事件
-func (r *Runtime) handleEvent(event *adk.AgentEvent) {
+// handleAgentEvent 处理 ADK Agent 事件
+func (r *Runtime) handleAgentEvent(event *adk.AgentEvent) {
 	if event.Output == nil {
 		return
 	}
@@ -110,7 +115,8 @@ func (r *Runtime) handleEvent(event *adk.AgentEvent) {
 	msg, err := output.GetMessage()
 	if err != nil {
 		log.Printf("获取消息失败: %v", err)
-		r.broker.Publish(pubsub.CreatedEvent, &schema.Message{
+		// 发布错误消息
+		r.broker.Publish(pubsub.UpdatedEvent, &schema.Message{
 			Role:    schema.System,
 			Content: fmt.Sprintf("错误: %v", err),
 		})
@@ -122,22 +128,11 @@ func (r *Runtime) handleEvent(event *adk.AgentEvent) {
 		log.Printf("存储消息失败: %v", err)
 	}
 
-	// 发布事件
-	r.broker.Publish(pubsub.CreatedEvent, msg)
-
-	// 如果有工具调用，发布工具事件
-	if len(msg.ToolCalls) > 0 {
-		for _, tc := range msg.ToolCalls {
-			toolMsg := &schema.Message{
-				Role:    schema.System,
-				Content: fmt.Sprintf("调用工具: %s", tc.Function.Name),
-			}
-			r.broker.Publish(pubsub.UpdatedEvent, toolMsg)
-		}
-	}
+	// 发布消息到 Broker（处理中的更新事件）
+	r.broker.Publish(pubsub.UpdatedEvent, msg)
 }
 
-// Broker 获取事件 Broker
+// Broker 获取消息 Broker
 func (r *Runtime) Broker() *pubsub.Broker[adk.Message] {
 	return r.broker
 }
@@ -151,10 +146,17 @@ func (r *Runtime) Store() ConversationStore {
 func (r *Runtime) Close() {
 	r.cancelFunc()
 	r.broker.Shutdown()
+	// 关闭 Coze Loop 客户端
+	if r.cozeClient != nil {
+		r.cozeClient.Close(r.ctx)
+	}
 }
 
 // SetupRuntime 设置 Runtime（从 main.go 调用）
 func SetupRuntime(ctx context.Context) (*Runtime, error) {
+	// 初始化 Coze Loop 观测
+	cozeClient := initCozeLoop(ctx)
+
 	// 创建 ChatModel
 	chatModel, err := providers.CreateChatModel(ctx)
 	if err != nil {
@@ -167,7 +169,41 @@ func SetupRuntime(ctx context.Context) (*Runtime, error) {
 		return nil, fmt.Errorf("创建工具失败: %w", err)
 	}
 
-	return NewRuntime(ctx, chatModel, toolsList)
+	runtime, err := NewRuntime(ctx, chatModel, toolsList)
+	if err != nil {
+		return nil, err
+	}
+	runtime.cozeClient = cozeClient
+
+	return runtime, nil
+}
+
+// initCozeLoop 初始化 Coze Loop 观测
+func initCozeLoop(ctx context.Context) cozeloop.Client {
+	cozeloopApiToken := os.Getenv("COZE_LOOP_API_TOKEN")
+	cozeloopWorkspaceID := os.Getenv("COZELOOP_WORKSPACE_ID")
+
+	if cozeloopApiToken == "" || cozeloopWorkspaceID == "" {
+		log.Println("Coze Loop 未配置（需要 COZE_LOOP_API_TOKEN 和 COZELOOP_WORKSPACE_ID 环境变量）")
+		return nil
+	}
+
+	client, err := cozeloop.NewClient(
+		cozeloop.WithAPIToken(cozeloopApiToken),
+		cozeloop.WithWorkspaceID(cozeloopWorkspaceID),
+	)
+	if err != nil {
+		log.Printf("创建 Coze Loop 客户端失败: %v", err)
+		return nil
+	}
+
+	log.Println("Coze Loop 观测已启用")
+
+	// 注册全局回调处理器
+	handler := clc.NewLoopHandler(client)
+	callbacks.AppendGlobalHandlers(handler)
+
+	return client
 }
 
 // createTools 创建所有工具

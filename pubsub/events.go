@@ -9,6 +9,8 @@ const (
 	UpdatedEvent EventType = "updated"
 	// DeletedEvent 资源删除事件
 	DeletedEvent EventType = "deleted"
+	// FinishedEvent 资源结束事件
+	FinishedEvent EventType = "finished"
 )
 
 // Subscriber 订阅者接口，定义了获取事件通道的方法

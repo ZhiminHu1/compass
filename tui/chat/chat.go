@@ -1,35 +1,47 @@
 package chat
 
-// A simple program demonstrating the text area component from the Bubbles
-// component library.
-
 import (
+	"context"
+
+	"cowork-agent/llm/agent"
+	"cowork-agent/pubsub"
 	"cowork-agent/tui/component"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/schema"
 )
 
+// Model 聊天界面模型
 type Model struct {
 	list   component.ListModel
 	edit   component.EditModel
 	status component.StatusModel
+
+	runtime *agent.Runtime
+	sub     <-chan pubsub.Event[adk.Message]
+	ctx     context.Context
 
 	width  int
 	height int
 	err    error
 }
 
-func InitialModel() Model {
+// InitialModel 创建初始模型
+func InitialModel(runtime *agent.Runtime) Model {
+	ctx := context.Background()
+	sub := runtime.Broker().Subscribe(ctx)
+
 	return Model{
-		list:   component.NewListModel(),
-		edit:   component.NewEditModel(),
-		status: component.NewStatusModel(),
-		width:  0,
-		height: 0,
-		err:    nil,
+		list:    component.NewListModel(),
+		edit:    component.NewEditModel(),
+		status:  component.NewStatusModel(),
+		runtime: runtime,
+		sub:     sub,
+		ctx:     ctx,
+		width:   0,
+		height:  0,
+		err:     nil,
 	}
 }
 
@@ -38,7 +50,16 @@ func (m Model) Init() tea.Cmd {
 		m.list.Init(),
 		m.edit.Init(),
 		m.status.Init(),
+		m.waitForAgentMessage(), // 订阅 Agent 消息
 	)
+}
+
+// waitForAgentMessage 等待 Agent 消息的 Cmd
+func (m Model) waitForAgentMessage() tea.Cmd {
+	return func() tea.Msg {
+		event := <-m.sub
+		return event
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -60,16 +81,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status.SetWidth(m.width)
 
 	case component.EditorSubmitMsg:
-		// 处理用户输入提交
-		userMsg := createUserMsg(msg.Value)
-		m.list.AddMessage(userMsg)
+		// 调用 Agent（在 goroutine 中）
+		go func() {
+			_ = m.runtime.Run(msg.Value)
+		}()
 
-		// 启动 status spinner
-		if !m.status.IsRunning() {
-			m.status.SetText("Processing...")
-			cmd := m.status.Start()
-			cmds = append(cmds, cmd)
-		}
+	case pubsub.Event[adk.Message]:
+		// 继续等待下一条消息
+		cmds = append(cmds, m.waitForAgentMessage())
+		// list 和 status 会在下面透传处理
 
 	case tea.KeyMsg:
 		switch msg.Type {
@@ -100,11 +120,4 @@ func (m Model) View() string {
 		m.status.View(),
 		m.edit.View(),
 	)
-}
-
-func createUserMsg(value string) adk.Message {
-	return &schema.Message{
-		Role:    schema.User,
-		Content: value,
-	}
 }

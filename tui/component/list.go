@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"cowork-agent/pubsub"
+
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -120,6 +122,20 @@ func (m ListModel) Update(msg tea.Msg) (ListModel, tea.Cmd) {
 		case tea.MouseButtonWheelDown:
 			m.viewport.ScrollDown(3)
 		}
+	case pubsub.Event[adk.Message]:
+		// 处理 Agent 消息事件（跳过 nil payload，如 FinishedEvent）
+		if msg.Type != pubsub.FinishedEvent {
+			m.messages = append(m.messages, msg.Payload)
+
+			// 如果是 Tool 类型的消息，将其内容存入 map
+			if msg.Payload.Role == schema.Tool && msg.Payload.ToolCallID != "" {
+				m.toolResults[msg.Payload.ToolCallID] = msg.Payload.Content
+			}
+
+			m.updateViewportContent()
+			m.viewport.GotoBottom()
+		}
+		return m, nil
 	}
 
 	// 更新 viewport
@@ -344,11 +360,6 @@ func (m *ListModel) formatArguments(args string) string {
 		return args[:maxLen] + "..."
 	}
 	return args
-}
-
-// GetMessages 获取所有消息
-func (m *ListModel) GetMessages() []adk.Message {
-	return m.messages
 }
 
 // Clear 清空消息列表
