@@ -22,19 +22,16 @@ type ToolRenderer struct {
 func NewToolRenderer() *ToolRenderer {
 	return &ToolRenderer{
 		metadataOnlyTools: map[string]bool{
-			"view":        true, // read_file - 文件读取
-			"read":        true, // read_file 别名
-			"read_file":   true, // 文件读取
-			"list":        true, // list_dir - 目录列表
-			"list_dir":    true, // 目录列表
-			"grep":        true, // grep - 内容搜索
-			"glob":        true, // glob - 文件匹配
-			"bash":        true, // bash - 命令执行
-			"web_search":  true, // web_search - 网络搜索
-			"fetch":       true, // fetch - 网页获取
-			"file_write":  true, // write_file - 文件写入
-			"file_edit":   true, // edit_file - 文件编辑
-			"file_delete": true, // delete_file - 文件删除
+			"write":      false, //write -写入文件
+			"edit":       false, // edit - 编辑文件
+			"delete":     false,
+			"list":       false, //list  - 目录列表
+			"bash":       false, // bash - 命令执行
+			"read":       true,  // read - 文件读取
+			"grep":       true,  // grep - 内容搜索
+			"glob":       true,  // glob - 文件匹配
+			"web_search": true,  // web_search - 网络搜索
+			"fetch":      true,  // fetch - 网页获取
 		},
 	}
 }
