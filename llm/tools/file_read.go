@@ -68,11 +68,7 @@ func ReadFileFunc(ctx context.Context, params ReadFileParams) (string, error) {
 	content := strings.Join(lines[start-1:end], "\n")
 
 	absPath, _ := filepath.Abs(params.Path)
-	return Success(content, &Metadata{
-		FilePath:  absPath,
-		LineCount: len(lines),
-		ByteCount: len(data),
-	})
+	return ReadFileSuccess(content, absPath, len(lines), len(data))
 }
 
 // GetReadFileTool returns the read file tool.

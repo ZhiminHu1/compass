@@ -53,10 +53,7 @@ func WriteFileFunc(ctx context.Context, params WriteFileParams) (string, error) 
 	}
 
 	absPath, _ := filepath.Abs(params.Path)
-	return Success(fmt.Sprintf("File written: %s", absPath), &Metadata{
-		FilePath:  absPath,
-		ByteCount: len(params.Content),
-	})
+	return WriteFileSuccess(absPath, len(params.Content))
 }
 
 // GetWriteFileTool returns the write file tool.

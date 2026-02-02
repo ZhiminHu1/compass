@@ -87,13 +87,13 @@ func ListDirFunc(ctx context.Context, params ListDirParams) (string, error) {
 	}
 
 	if len(results) == 0 {
-		return Success("Directory is empty", &Metadata{FilePath: absPath})
+		return Success("Directory is empty", &Metadata{FilePath: absPath}, TierMinimal)
 	}
 
 	return Success(strings.Join(results, "\n"), &Metadata{
-		FilePath:   absPath,
-		MatchCount: len(results),
-	})
+		FilePath:  absPath,
+		FileCount: len(results),
+	}, TierMinimal)
 }
 
 // GetListDirTool returns the list directory tool.

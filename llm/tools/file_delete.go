@@ -55,7 +55,7 @@ func DeleteFileFunc(ctx context.Context, params DeleteFileParams) (string, error
 	}
 
 	absPath, _ := filepath.Abs(params.Path)
-	return Success(fmt.Sprintf("File deleted: %s", absPath), &Metadata{FilePath: absPath})
+	return DeleteFileSuccess(absPath)
 }
 
 // GetDeleteFileTool returns the delete file tool.

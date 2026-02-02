@@ -61,7 +61,6 @@ func EditFileFunc(ctx context.Context, params EditFileParams) (string, error) {
 		return Error(fmt.Sprintf("search string not found in file: %s", params.Path))
 	}
 
-	count := strings.Count(content, params.Search)
 	newContent := strings.ReplaceAll(content, params.Search, params.Replace)
 	err = os.WriteFile(params.Path, []byte(newContent), 0644)
 	if err != nil {
@@ -69,9 +68,7 @@ func EditFileFunc(ctx context.Context, params EditFileParams) (string, error) {
 	}
 
 	absPath, _ := filepath.Abs(params.Path)
-	return Success(fmt.Sprintf("File updated: %s (%d occurrence(s) replaced)", absPath, count), &Metadata{
-		FilePath: absPath,
-	})
+	return EditFileSuccess(absPath, strings.Count(newContent, "\n")+1)
 }
 
 // GetEditFileTool returns the edit file tool.

@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"cowork-agent/temp/example4/vectorstore"
 	"fmt"
 	"log"
 	"strings"
@@ -20,15 +19,6 @@ const (
 	// MaxTopK is the maximum allowed results
 	MaxTopK = 10
 )
-
-var (
-	globalVectorStore *vectorstore.VectorStore
-)
-
-// InitKnowledgeTool initializes the knowledge base with a vector store
-func InitKnowledgeTool(vs *vectorstore.VectorStore) {
-	globalVectorStore = vs
-}
 
 // KnowledgeToolParams defines parameters for knowledge base search
 type KnowledgeToolParams struct {
@@ -63,7 +53,7 @@ EXAMPLES:
 
 // KnowledgeToolFunc searches the knowledge base for relevant information
 func KnowledgeToolFunc(ctx context.Context, params KnowledgeToolParams) (string, error) {
-	if globalVectorStore == nil {
+	if globalKnowledgeVectorStore == nil {
 		return Error("knowledge base is not initialized")
 	}
 
@@ -80,14 +70,14 @@ func KnowledgeToolFunc(ctx context.Context, params KnowledgeToolParams) (string,
 	}
 
 	// Search the knowledge base
-	results, err := globalVectorStore.Search(ctx, params.Query, topK)
+	results, err := globalKnowledgeVectorStore.Search(ctx, params.Query, topK)
 	if err != nil {
 		return Error(fmt.Sprintf("knowledge base search failed: %v", err))
 	}
 
 	if len(results) == 0 {
 		return Success("No relevant content found in the knowledge base. Try using web_search for current information.",
-			&Metadata{MatchCount: 0})
+			&Metadata{MatchCount: 0}, TierCompact)
 	}
 
 	// Format results
@@ -100,24 +90,18 @@ func KnowledgeToolFunc(ctx context.Context, params KnowledgeToolParams) (string,
 		sb.WriteString("\n")
 
 		// Add metadata if available
-		if result.Document.Metadata != nil {
-			var meta []string
-			if source, ok := result.Document.Metadata["source"].(string); ok && source != "" {
-				meta = append(meta, fmt.Sprintf("source: %s", source))
-			}
-			if timestamp, ok := result.Document.Metadata["timestamp"].(string); ok && timestamp != "" {
-				meta = append(meta, fmt.Sprintf("time: %s", timestamp))
-			}
-			if len(meta) > 0 {
-				sb.WriteString(fmt.Sprintf("[metadata: %s]", strings.Join(meta, ", ")))
-			}
+		if result.Document.Source != "" {
+			sb.WriteString(fmt.Sprintf("[source: %s]", result.Document.Source))
+		}
+		if result.Document.Title != "" {
+			sb.WriteString(fmt.Sprintf(" [title: %s]", result.Document.Title))
 		}
 		sb.WriteString("\n")
 	}
 
 	return Success(sb.String(), &Metadata{
 		MatchCount: len(results),
-	})
+	}, TierCompact)
 }
 
 // GetKnowledgeTool returns the knowledge base search tool with enhanced description

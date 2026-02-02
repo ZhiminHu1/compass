@@ -11,7 +11,8 @@
       "Bash(go mod:*)",
       "Bash(powershell:*)",
       "WebSearch",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(go get:*)"
     ]
   }
 }

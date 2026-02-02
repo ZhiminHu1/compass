@@ -148,7 +148,7 @@ func BashToolFunc(ctx context.Context, params BashToolParams) (string, error) {
 		output = append(output, "Command completed with no output")
 	}
 
-	return SuccessWithCommand(
+	return BashSuccess(
 		strings.Join(output, "\n"),
 		command,
 		duration.Milliseconds(),

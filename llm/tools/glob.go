@@ -89,7 +89,7 @@ func GlobToolFunc(_ context.Context, params GlobToolParams) (string, error) {
 	}
 
 	if len(matches) == 0 {
-		return Success("No matches found", &Metadata{MatchCount: 0})
+		return GlobSuccess("No matches found", 0)
 	}
 
 	// Apply max results limit
@@ -122,9 +122,7 @@ func GlobToolFunc(_ context.Context, params GlobToolParams) (string, error) {
 			maxResults, maxResults)
 	}
 
-	return Success(content, &Metadata{
-		MatchCount: len(matches),
-	})
+	return GlobSuccess(content, len(matches))
 }
 
 // GetGlobTool returns the glob tool with enhanced description.

@@ -169,12 +169,7 @@ func FetchToolFunc(ctx context.Context, params FetchToolParams) (string, error) 
 		})
 	}
 
-	return Success(content, &Metadata{
-		URL:        params.URL,
-		StatusCode: resp.StatusCode,
-		ByteCount:  len(bodyBytes),
-		Duration:   duration.Milliseconds(),
-	})
+	return FetchSuccess(content, params.URL, resp.StatusCode)
 }
 
 func extractTextFromHTML(html string) (string, error) {

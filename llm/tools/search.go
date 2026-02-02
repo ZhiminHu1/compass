@@ -137,7 +137,7 @@ func SearchToolFunc(ctx context.Context, params SearchToolParams) (string, error
 
 	if len(results) == 0 {
 		return Success(fmt.Sprintf("No results found for '%s'", params.Query),
-			&Metadata{MatchCount: 0})
+			&Metadata{MatchCount: 0}, TierCompact)
 	}
 
 	// Format output
@@ -149,15 +149,9 @@ func SearchToolFunc(ctx context.Context, params SearchToolParams) (string, error
 		sb.WriteString(fmt.Sprintf("  Snippet: %s\n", res.Snippet))
 	}
 
-	var files []string
-	for _, r := range results {
-		files = append(files, r.Link)
-	}
-
 	return Success(sb.String(), &Metadata{
 		MatchCount: len(results),
-		Files:      files,
-	})
+	}, TierCompact)
 }
 
 // setRandomizedHeaders sets randomized HTTP headers to mimic a real browser

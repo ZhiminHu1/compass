@@ -7,7 +7,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/schema"
 )
 
 // ListModel 封装消息列表组件
@@ -21,9 +20,6 @@ type ListModel struct {
 
 	// renderer 消息渲染器
 	renderer *renderer.MessageRenderer
-
-	// toolRenderer 工具调用渲染器
-	toolRenderer *ToolRenderer
 }
 
 // NewListModel 创建新的消息列表组件
@@ -37,26 +33,17 @@ func NewListModel() ListModel {
 	// 创建消息渲染器
 	msgRenderer := renderer.NewMessageRenderer(styles)
 
-	// 创建工具渲染器
-	toolRend := NewToolRenderer()
-
-	// 设置工具渲染器到消息渲染器
+	// 创建新的工具渲染器并设置到消息渲染器
+	toolRend := renderer.NewToolRenderer()
 	msgRenderer.SetToolRenderer(toolRend)
 
-	// 设置工具结果获取函数
-	msgRenderer.SetToolResultsFunc(func(id string) (string, bool) {
-		// 这里需要在运行时获取，暂时返回空
-		return "", false
-	})
-
 	return ListModel{
-		viewport:     vp,
-		messages:     make([]adk.Message, 0),
-		renderer:     msgRenderer,
-		toolRenderer: toolRend,
-		width:        30,
-		height:       5,
-		ready:        true,
+		viewport: vp,
+		messages: make([]adk.Message, 0),
+		renderer: msgRenderer,
+		width:    30,
+		height:   5,
+		ready:    true,
 	}
 }
 
@@ -80,7 +67,12 @@ func (m ListModel) Update(msg tea.Msg) (ListModel, tea.Cmd) {
 		}
 	case pubsub.Event[adk.Message]:
 		if msg.Type != pubsub.FinishedEvent {
+			// 更新消息和索引
 			m.messages = append(m.messages, msg.Payload)
+
+			// 索引消息中的工具结果（如果是工具消息）
+			m.renderer.IndexMessage(msg.Payload)
+
 			m.updateViewportContent()
 			m.viewport.GotoBottom()
 		}
@@ -133,22 +125,9 @@ func (m *ListModel) SetSize(width, height int) {
 
 // updateViewportContent 更新 viewport 内容
 func (m *ListModel) updateViewportContent() {
-	// 将 messages 传递给渲染器，渲染器从中提取工具结果
-	m.renderer.SetToolResultsFunc(m.findToolResult(m.messages))
+	// 直接使用 renderer 渲染，不再传递 findToolResult
 	content := m.renderer.RenderMessages(m.messages)
 	m.viewport.SetContent(content)
-}
-
-// findToolResult 从消息列表中查找工具结果
-func (m *ListModel) findToolResult(messages []adk.Message) func(string) (string, bool) {
-	return func(toolCallID string) (string, bool) {
-		for _, msg := range messages {
-			if msg.Role == schema.Tool && msg.ToolCallID == toolCallID {
-				return msg.Content, true
-			}
-		}
-		return "", false
-	}
 }
 
 // GetRenderer 获取消息渲染器（用于外部配置）
@@ -156,14 +135,10 @@ func (m *ListModel) GetRenderer() *renderer.MessageRenderer {
 	return m.renderer
 }
 
-// GetToolRenderer 获取工具渲染器（用于外部配置）
-func (m *ListModel) GetToolRenderer() *ToolRenderer {
-	return m.toolRenderer
-}
-
 // Clear 清空消息列表
 func (m *ListModel) Clear() {
 	m.messages = make([]adk.Message, 0)
+	m.renderer.ClearIndex()
 	m.updateViewportContent()
 }
 

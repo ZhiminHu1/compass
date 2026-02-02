@@ -15,8 +15,10 @@ type MessageRenderer struct {
 	markdownRenderer *glamour.TermRenderer
 	styles           *MessageStyles
 	toolRenderer     ToolRendererInterface
-	getResultFunc    func(string) (string, bool)
-	viewportWidth    int
+	// getResultFunc func(string) (string, bool) // Removed in favor of toolResults
+	toolResults   map[string]string // 内部维护索引
+	renderedCache []string          // 已渲染消息的缓存
+	viewportWidth int
 }
 
 // ToolRendererInterface 工具渲染器接口
@@ -40,21 +42,15 @@ func NewMessageRenderer(styles *MessageStyles) *MessageRenderer {
 	}
 
 	// 初始化 Markdown 渲染器 (Dracula 主题)
-	markdownRenderer, err := glamour.NewTermRenderer(
+	markdownRenderer, _ := glamour.NewTermRenderer(
 		glamour.WithStylePath("dracula"),
 		glamour.WithWordWrap(0), // 禁用自动换行，由外部控制
 	)
-	if err != nil {
-		// 如果 dracula 主题失败，回退到 auto
-		markdownRenderer, _ = glamour.NewTermRenderer(
-			glamour.WithAutoStyle(),
-			glamour.WithWordWrap(0),
-		)
-	}
-
 	return &MessageRenderer{
 		markdownRenderer: markdownRenderer,
 		styles:           styles,
+		toolResults:      make(map[string]string),
+		renderedCache:    make([]string, 0),
 	}
 }
 
@@ -63,9 +59,16 @@ func (r *MessageRenderer) SetToolRenderer(renderer ToolRendererInterface) {
 	r.toolRenderer = renderer
 }
 
-// SetToolResultsFunc 设置工具结果获取函数
-func (r *MessageRenderer) SetToolResultsFunc(fn func(string) (string, bool)) {
-	r.getResultFunc = fn
+// IndexMessage 索引消息中的工具结果
+func (r *MessageRenderer) IndexMessage(msg adk.Message) {
+	if msg.Role == schema.Tool && msg.ToolCallID != "" {
+		r.toolResults[msg.ToolCallID] = msg.Content
+	}
+}
+
+// ClearIndex 清空工具结果索引
+func (r *MessageRenderer) ClearIndex() {
+	r.toolResults = make(map[string]string)
 }
 
 // SetViewportWidth 设置视口宽度
@@ -79,16 +82,39 @@ func (r *MessageRenderer) RenderMessages(messages []adk.Message) string {
 		return "Welcome to the chat room!\nType a message and press Enter to send."
 	}
 
-	var renderedMessages []string
-	for _, msg := range messages {
-		rendered := r.RenderMessage(msg)
-		if rendered != "" {
-			renderedMessages = append(renderedMessages, rendered)
+	// 1. 检测是否发生回退（例如清空列表），如果是则重置缓存
+	if len(messages) < len(r.renderedCache) {
+		r.renderedCache = r.renderedCache[:0]
+	}
+
+	for i := len(r.renderedCache); i < len(messages)-1; i++ {
+		rendered := r.RenderMessage(messages[i])
+		r.renderedCache = append(r.renderedCache, rendered)
+	}
+
+	// 3. 拼接内容
+	var sb strings.Builder
+
+	// 添加缓存的历史消息
+	for _, cached := range r.renderedCache {
+		if cached != "" {
+			sb.WriteString(cached)
+			sb.WriteString("\n\n")
 		}
 	}
 
-	content := strings.Join(renderedMessages, "\n\n")
-	// 包装内容以适应宽度
+	// 渲染并添加当前最后一条消息 (不缓存，因为它可能还在变)
+	if len(messages) > 0 {
+		lastMsg := messages[len(messages)-1]
+		renderedLast := r.RenderMessage(lastMsg)
+		if renderedLast != "" {
+			sb.WriteString(renderedLast)
+		}
+	}
+
+	content := sb.String()
+
+	// 4. 包装内容以适应宽度
 	if r.viewportWidth > 0 {
 		return lipgloss.NewStyle().Width(r.viewportWidth).Render(content)
 	}
@@ -202,7 +228,12 @@ func (r *MessageRenderer) renderToolCall(tc schema.ToolCall, index int) string {
 			Tool:     r.styles.Tool,
 			ToolName: r.styles.ToolName,
 		}
-		return r.toolRenderer.RenderToolCall(tc, index, r.getResultFunc, styles)
+		// 使用内部索引查找结果
+		getResult := func(id string) (string, bool) {
+			res, ok := r.toolResults[id]
+			return res, ok
+		}
+		return r.toolRenderer.RenderToolCall(tc, index, getResult, styles)
 	}
 
 	// 没有设置工具渲染器，返回简单提示

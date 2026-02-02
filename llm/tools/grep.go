@@ -122,8 +122,7 @@ func GrepToolFunc(ctx context.Context, params GrepToolParams) (string, error) {
 	}
 
 	if len(matches) == 0 {
-		return Success(fmt.Sprintf("No matches found for pattern '%s'", params.Pattern),
-			&Metadata{MatchCount: 0})
+		return GrepSuccess(fmt.Sprintf("No matches found for pattern '%s'", params.Pattern), params.Pattern, 0, 0)
 	}
 
 	// Format results
@@ -156,10 +155,7 @@ func GrepToolFunc(ctx context.Context, params GrepToolParams) (string, error) {
 		files = append(files, filepath.Base(f))
 	}
 
-	return Success(sb.String(), &Metadata{
-		MatchCount: len(matches),
-		Files:      files,
-	})
+	return GrepSuccess(sb.String(), params.Pattern, len(matches), len(files))
 }
 
 // findCommonDir finds the common parent directory of multiple files.
