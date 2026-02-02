@@ -146,7 +146,7 @@ func SearchToolFunc(ctx context.Context, params SearchToolParams) (string, error
 	for _, res := range results {
 		sb.WriteString(fmt.Sprintf("- **%s**\n", res.Title))
 		sb.WriteString(fmt.Sprintf("  URL: %s\n", res.Link))
-		sb.WriteString(fmt.Sprintf("  Snippet: %s\n\n", res.Snippet))
+		sb.WriteString(fmt.Sprintf("  Snippet: %s\n", res.Snippet))
 	}
 
 	var files []string

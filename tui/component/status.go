@@ -72,10 +72,12 @@ func (m StatusModel) Update(msg tea.Msg) (StatusModel, tea.Cmd) {
 
 // View 渲染组件视图
 func (m StatusModel) View() string {
+	style := lipgloss.NewStyle().Padding(1, 0)
+	content := m.text
 	if m.running {
-		return fmt.Sprintf("\n%s %s\n", m.spinner.View(), m.text)
+		content = fmt.Sprintf("%s %s", m.spinner.View(), m.text)
 	}
-	return fmt.Sprintf("\n%s\n", m.text)
+	return style.Render(content)
 }
 
 // Start 启动 spinner

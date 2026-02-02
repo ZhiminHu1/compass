@@ -27,7 +27,7 @@ type Runtime struct {
 	broker     *pubsub.Broker[adk.Message]
 	ctx        context.Context
 	cancelFunc context.CancelFunc
-	cozeClient cozeloop.Client // Coze Loop 观测客户端（interface，不是指针）
+	cozeClient cozeloop.Client
 }
 
 // NewRuntime 创建新的 Agent 运行时
@@ -226,7 +226,7 @@ func createTools(ctx context.Context) ([]tool.BaseTool, error) {
 
 	// 网络工具
 	toolsList = append(toolsList, tools.GetSearchTool())
-	toolsList = append(toolsList, tools.GetFetchTool())
+	toolsList = append(toolsList, tools.GetContentSummaryTool(ctx))
 
 	// 知识库工具
 	toolsList = append(toolsList, tools.GetKnowledgeTool())

@@ -73,7 +73,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 计算各组件高度
 		statusHeight := lipgloss.Height(m.status.View())
 		editHeight := m.edit.Height()
-		listHeight := m.height - statusHeight - editHeight
+		// 减去 1 行作为安全余量，防止高度溢出导致滚动问题
+		listHeight := m.height - statusHeight - editHeight - 1
+
+		if listHeight < 0 {
+			listHeight = 0
+		}
 
 		// 更新各组件尺寸
 		m.list.SetSize(m.width, listHeight)
