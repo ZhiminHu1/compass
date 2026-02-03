@@ -13,11 +13,7 @@ import (
 type FileType string
 
 const (
-	FileTypePDF     FileType = "pdf"
-	FileTypeDocx    FileType = "docx"
 	FileTypeMD      FileType = "md"
-	FileTypeHTML    FileType = "html"
-	FileTypeHTM     FileType = "htm"
 	FileTypeTXT     FileType = "txt"
 	FileTypeUnknown FileType = "unknown"
 )
@@ -84,14 +80,8 @@ func (r *Registry) ParseFile(ctx context.Context, filePath string) (*Document, e
 // FileTypeFromExt converts a file extension to FileType
 func FileTypeFromExt(ext string) FileType {
 	switch strings.ToLower(ext) {
-	case "pdf":
-		return FileTypePDF
-	case "docx", "doc":
-		return FileTypeDocx
 	case "md", "markdown":
 		return FileTypeMD
-	case "html", "htm":
-		return FileTypeHTML
 	case "txt":
 		return FileTypeTXT
 	default:
@@ -109,10 +99,6 @@ func DefaultRegistry() *Registry {
 	reg := NewRegistry()
 	reg.Register(NewTxtParser())
 	reg.Register(NewMarkdownParser())
-	reg.Register(NewHTMLParser())
-
-	// Note: PDF and DOCX parsers require additional dependencies
-	// and should be registered explicitly if the dependencies are available
 	return reg
 }
 
