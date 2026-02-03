@@ -27,15 +27,8 @@ func NewListModel() ListModel {
 	vp := viewport.New(30, 30)
 	vp.SetContent(`Welcome to the chat room!Type a message and press Enter to send.`)
 
-	// 创建样式
-	styles := renderer.DefaultMessageStyles()
-
-	// 创建消息渲染器
-	msgRenderer := renderer.NewMessageRenderer(styles)
-
-	// 创建新的工具渲染器并设置到消息渲染器
-	toolRend := renderer.NewToolRenderer()
-	msgRenderer.SetToolRenderer(toolRend)
+	// 创建消息渲染器（内部已包含默认样式和工具渲染逻辑）
+	msgRenderer := renderer.NewMessageRenderer()
 
 	return ListModel{
 		viewport: vp,
@@ -92,13 +85,6 @@ func (m ListModel) View() string {
 	return m.viewport.View()
 }
 
-// AddMessage 添加新消息并滚动到底部
-func (m *ListModel) AddMessage(msg adk.Message) {
-	m.messages = append(m.messages, msg)
-	m.updateViewportContent()
-	m.viewport.GotoBottom()
-}
-
 // SetSize 设置组件尺寸
 func (m *ListModel) SetSize(width, height int) {
 	m.width = width
@@ -128,21 +114,4 @@ func (m *ListModel) updateViewportContent() {
 	// 直接使用 renderer 渲染，不再传递 findToolResult
 	content := m.renderer.RenderMessages(m.messages)
 	m.viewport.SetContent(content)
-}
-
-// GetRenderer 获取消息渲染器（用于外部配置）
-func (m *ListModel) GetRenderer() *renderer.MessageRenderer {
-	return m.renderer
-}
-
-// Clear 清空消息列表
-func (m *ListModel) Clear() {
-	m.messages = make([]adk.Message, 0)
-	m.renderer.ClearIndex()
-	m.updateViewportContent()
-}
-
-// GetMessages 获取所有消息
-func (m *ListModel) GetMessages() []adk.Message {
-	return m.messages
 }

@@ -1,8 +1,12 @@
 package renderer
 
 import (
+	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
+
+	"cowork-agent/llm/tools"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
@@ -13,53 +17,319 @@ import (
 // MessageRenderer 消息渲染器
 type MessageRenderer struct {
 	markdownRenderer *glamour.TermRenderer
-	styles           *MessageStyles
-	toolRenderer     ToolRendererInterface
-	// getResultFunc func(string) (string, bool) // Removed in favor of toolResults
-	toolResults   map[string]string // 内部维护索引
-	renderedCache []string          // 已渲染消息的缓存
-	viewportWidth int
-}
-
-// ToolRendererInterface 工具渲染器接口
-type ToolRendererInterface interface {
-	RenderToolCall(tc schema.ToolCall, index int, getResultFunc func(string) (string, bool), styles interface{}) string
-}
-
-// ToolStyles 工具渲染样式（需要与 tool_renderer.go 中的定义兼容）
-type ToolStyles struct {
-	Indent   lipgloss.Style
-	Border   lipgloss.Style
-	System   lipgloss.Style
-	Tool     lipgloss.Style
-	ToolName lipgloss.Style
+	theme            *Theme
+	icons            *Icons
+	toolResults      map[string]string // toolCallID -> JSON string
+	viewportWidth    int
 }
 
 // NewMessageRenderer 创建消息渲染器
-func NewMessageRenderer(styles *MessageStyles) *MessageRenderer {
-	if styles == nil {
-		styles = DefaultMessageStyles()
-	}
-
-	// 初始化 Markdown 渲染器 (Dracula 主题)
+func NewMessageRenderer() *MessageRenderer {
 	markdownRenderer, _ := glamour.NewTermRenderer(
 		glamour.WithStylePath("dracula"),
-		glamour.WithWordWrap(0), // 禁用自动换行，由外部控制
+		glamour.WithWordWrap(0),
 	)
 	return &MessageRenderer{
 		markdownRenderer: markdownRenderer,
-		styles:           styles,
+		theme:            DefaultTheme(),
+		icons:            DefaultIcons(),
 		toolResults:      make(map[string]string),
-		renderedCache:    make([]string, 0),
 	}
 }
 
-// SetToolRenderer 设置工具渲染器
-func (r *MessageRenderer) SetToolRenderer(renderer ToolRendererInterface) {
-	r.toolRenderer = renderer
+// RenderMessages 渲染所有消息
+func (r *MessageRenderer) RenderMessages(messages []adk.Message) string {
+	if len(messages) == 0 {
+		return "Welcome to the chat room!\nType a message and press Enter to send."
+	}
+
+	var lines []string
+	for _, msg := range messages {
+		rendered := r.RenderMessage(msg)
+		if rendered != "" {
+			lines = append(lines, rendered)
+		}
+	}
+
+	content := strings.Join(lines, "\n\n")
+
+	if r.viewportWidth > 0 {
+		return lipgloss.NewStyle().Width(r.viewportWidth).Render(content)
+	}
+	return content
 }
 
-// IndexMessage 索引消息中的工具结果
+// RenderMessage 渲染单条消息
+func (r *MessageRenderer) RenderMessage(msg adk.Message) string {
+	switch msg.Role {
+	case schema.User:
+		return r.renderUser(msg)
+	case schema.Assistant:
+		return r.renderAssistant(msg)
+	case schema.System:
+		return r.renderSystem(msg)
+	}
+	return ""
+}
+
+// renderUser 渲染用户消息
+func (r *MessageRenderer) renderUser(msg adk.Message) string {
+	if msg.Content == "" {
+		return ""
+	}
+	return r.theme.User.Render("User:") + " " + msg.Content
+}
+
+// renderAssistant 渲染助手消息
+func (r *MessageRenderer) renderAssistant(msg adk.Message) string {
+	var parts []string
+
+	if msg.ReasoningContent != "" {
+		header := r.theme.Thinking.Render("Thinking:")
+		content := r.theme.Thinking.Render(msg.ReasoningContent)
+		parts = append(parts, header+"\n"+content)
+	}
+
+	if msg.Content != "" {
+		header := r.theme.Assistant.Render("Assistant:")
+		renderedContent := r.renderMarkdown(msg.Content)
+		parts = append(parts, header+"\n"+renderedContent)
+	}
+
+	if len(msg.ToolCalls) > 0 {
+		if msg.Content == "" && msg.ReasoningContent == "" {
+			parts = append(parts, r.theme.Assistant.Render("Assistant:"))
+		}
+		parts = append(parts, r.renderToolCalls(msg.ToolCalls))
+	}
+
+	return strings.Join(parts, "\n")
+}
+
+// renderSystem 渲染系统消息
+func (r *MessageRenderer) renderSystem(msg adk.Message) string {
+	if msg.Content == "" {
+		return ""
+	}
+	return r.theme.System.Render("System: " + msg.Content)
+}
+
+// renderToolCalls 渲染工具调用列表
+func (r *MessageRenderer) renderToolCalls(toolCalls []schema.ToolCall) string {
+	var parts []string
+	for i, tc := range toolCalls {
+		rendered := r.renderToolCall(tc, i+1)
+		if rendered != "" {
+			parts = append(parts, rendered)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// renderToolCall 渲染单个工具调用
+func (r *MessageRenderer) renderToolCall(tc schema.ToolCall, index int) string {
+	resultJSON, ok := r.toolResults[tc.ID]
+	if !ok {
+		return r.theme.Minimal.Render(fmt.Sprintf("│ %s #%d: (%s) (no result)",
+			r.icons.Tool, index, tc.Function.Name))
+	}
+
+	// 解析 ToolResult - 使用统一类型
+	var result tools.ToolResult
+	if err := json.Unmarshal([]byte(resultJSON), &result); err != nil {
+		preview := Truncate(resultJSON, 100)
+		return r.theme.Minimal.Render(fmt.Sprintf("│ %s #%d: %s",
+			r.icons.Tool, index, preview))
+	}
+
+	// 根据 Tier 渲染
+	switch result.Tier {
+	case tools.TierMinimal:
+		return r.renderToolMinimal(&result, index)
+	case tools.TierCompact:
+		return r.renderToolCompact(&result, index)
+	default:
+		return r.renderToolFull(&result, index)
+	}
+}
+
+// renderToolMinimal 最小化渲染（单行）
+func (r *MessageRenderer) renderToolMinimal(result *tools.ToolResult, callNum int) string {
+	icon := r.icons.Tool
+	md := result.Metadata
+	if md == nil {
+		return r.theme.Minimal.Render(fmt.Sprintf("│ %s #%d ✅", icon, callNum))
+	}
+
+	var parts []string
+
+	// 文件名
+	if md.FilePath != "" {
+		parts = append(parts, filepath.Base(md.FilePath))
+	}
+
+	// 关键指标
+	if md.LineCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d行", md.LineCount))
+	}
+	if md.MatchCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d匹配", md.MatchCount))
+	}
+	if md.FileCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d文件", md.FileCount))
+	}
+	if md.ByteCount > 0 {
+		parts = append(parts, FormatBytes(md.ByteCount))
+	}
+
+	status := r.icons.Success
+	if result.Status == tools.StatusError {
+		status = r.icons.Error
+	}
+
+	summary := strings.Join(parts, " · ")
+	line := fmt.Sprintf("│ %s #%d: %s %s", icon, callNum, summary, status)
+
+	return r.theme.Minimal.Render(line)
+}
+
+// renderToolCompact 紧凑渲染（2-3行）
+func (r *MessageRenderer) renderToolCompact(result *tools.ToolResult, callNum int) string {
+	md := result.Metadata
+	var lines []string
+
+	// 第1行：头部
+	header := r.theme.ToolBorder.Render("┌─ ") +
+		r.theme.ToolBorder.Render(fmt.Sprintf(" #%d", callNum))
+	lines = append(lines, header)
+
+	// 第2行：关键信息
+	if md != nil {
+		var info []string
+		if md.Command != "" {
+			info = append(info, Truncate(md.Command, 50))
+		}
+		if md.URL != "" {
+			info = append(info, ShortenURL(md.URL))
+		}
+		if md.FilePath != "" {
+			info = append(info, filepath.Base(md.FilePath))
+		}
+
+		if len(info) > 0 {
+			lines = append(lines,
+				r.theme.ToolBorder.Render("│ ")+r.theme.Compact.Render(strings.Join(info, " · ")))
+		}
+	}
+
+	// 第3行：状态和指标
+	var metrics []string
+	if md != nil {
+		if md.Duration > 0 {
+			if d := FormatDuration(md.Duration); d != "" {
+				metrics = append(metrics, fmt.Sprintf("%s %s", r.icons.Clock, d))
+			}
+		}
+		if md.ExitCode != 0 {
+			metrics = append(metrics, fmt.Sprintf("%s exit:%d", r.icons.Error, md.ExitCode))
+		} else if md.ExitCode == 0 && md.Command != "" {
+			metrics = append(metrics, r.icons.Success)
+		}
+		if md.StatusCode > 0 {
+			if md.StatusCode == 200 {
+				metrics = append(metrics, fmt.Sprintf("%s 200", r.icons.Success))
+			} else {
+				metrics = append(metrics, fmt.Sprintf("📊 %d", md.StatusCode))
+			}
+		}
+	}
+
+	if len(metrics) > 0 {
+		lines = append(lines,
+			r.theme.ToolBorder.Render("├─ ")+r.theme.Result.Render(strings.Join(metrics, " · ")))
+	}
+
+	lines = append(lines, r.theme.ToolBorder.Render("└─"))
+
+	return strings.Join(lines, "\n")
+}
+
+// renderToolFull 完整渲染（传统盒子）
+func (r *MessageRenderer) renderToolFull(result *tools.ToolResult, callNum int) string {
+	md := result.Metadata
+	var lines []string
+
+	// 头部
+	header := r.theme.ToolBorder.Render("┌─ ") +
+		r.theme.ToolBorder.Render(fmt.Sprintf(" Tool #%d", callNum))
+	lines = append(lines, header)
+
+	// Arguments摘要
+	if md != nil && md.FilePath != "" {
+		args := r.theme.Arguments.Render(fmt.Sprintf("📁 %s", filepath.Base(md.FilePath)))
+		lines = append(lines, r.theme.ToolBorder.Render("│ ")+args)
+	}
+
+	// Result
+	lines = append(lines, r.theme.ToolBorder.Render("├─ Result:"))
+
+	// 元数据摘要
+	if md != nil {
+		summary := r.formatMetadataSummary(md)
+		if summary != "" {
+			lines = append(lines,
+				r.theme.ToolBorder.Render("│  ")+r.theme.Result.Render(summary))
+		}
+	}
+
+	// 内容预览
+	if result.Content != "" {
+		preview := Truncate(result.Content, 150)
+		lines = append(lines,
+			r.theme.ToolBorder.Render("│  ")+r.theme.Result.Render(preview))
+	}
+
+	lines = append(lines, r.theme.ToolBorder.Render("└─"))
+
+	return strings.Join(lines, "\n")
+}
+
+// formatMetadataSummary 格式化元数据摘要
+func (r *MessageRenderer) formatMetadataSummary(md *tools.Metadata) string {
+	var parts []string
+
+	if md.FilePath != "" {
+		parts = append(parts, fmt.Sprintf("%s %s", r.icons.File, filepath.Base(md.FilePath)))
+	}
+	if md.LineCount > 0 {
+		parts = append(parts, fmt.Sprintf("📏 %d 行", md.LineCount))
+	}
+	if md.ByteCount > 0 {
+		parts = append(parts, fmt.Sprintf("📦 %s", FormatBytes(md.ByteCount)))
+	}
+	if md.MatchCount > 0 {
+		parts = append(parts, fmt.Sprintf("%s %d 匹配", r.icons.Search, md.MatchCount))
+	}
+	if md.FileCount > 0 {
+		parts = append(parts, fmt.Sprintf("📁 %d 文件", md.FileCount))
+	}
+
+	return strings.Join(parts, " · ")
+}
+
+// renderMarkdown 渲染 Markdown 内容
+func (r *MessageRenderer) renderMarkdown(content string) string {
+	if r.markdownRenderer == nil {
+		return content
+	}
+	rendered, err := r.markdownRenderer.Render(content)
+	if err != nil {
+		return content
+	}
+	return strings.TrimSpace(rendered)
+}
+
+// IndexMessage 索引工具结果
 func (r *MessageRenderer) IndexMessage(msg adk.Message) {
 	if msg.Role == schema.Tool && msg.ToolCallID != "" {
 		r.toolResults[msg.ToolCallID] = msg.Content
@@ -74,176 +344,4 @@ func (r *MessageRenderer) ClearIndex() {
 // SetViewportWidth 设置视口宽度
 func (r *MessageRenderer) SetViewportWidth(width int) {
 	r.viewportWidth = width
-}
-
-// RenderMessages 渲染所有消息
-func (r *MessageRenderer) RenderMessages(messages []adk.Message) string {
-	if len(messages) == 0 {
-		return "Welcome to the chat room!\nType a message and press Enter to send."
-	}
-
-	// 1. 检测是否发生回退（例如清空列表），如果是则重置缓存
-	if len(messages) < len(r.renderedCache) {
-		r.renderedCache = r.renderedCache[:0]
-	}
-
-	for i := len(r.renderedCache); i < len(messages)-1; i++ {
-		rendered := r.RenderMessage(messages[i])
-		r.renderedCache = append(r.renderedCache, rendered)
-	}
-
-	// 3. 拼接内容
-	var sb strings.Builder
-
-	// 添加缓存的历史消息
-	for _, cached := range r.renderedCache {
-		if cached != "" {
-			sb.WriteString(cached)
-			sb.WriteString("\n\n")
-		}
-	}
-
-	// 渲染并添加当前最后一条消息 (不缓存，因为它可能还在变)
-	if len(messages) > 0 {
-		lastMsg := messages[len(messages)-1]
-		renderedLast := r.RenderMessage(lastMsg)
-		if renderedLast != "" {
-			sb.WriteString(renderedLast)
-		}
-	}
-
-	content := sb.String()
-
-	// 4. 包装内容以适应宽度
-	if r.viewportWidth > 0 {
-		return lipgloss.NewStyle().Width(r.viewportWidth).Render(content)
-	}
-	return content
-}
-
-// RenderMessage 渲染单条消息
-func (r *MessageRenderer) RenderMessage(msg adk.Message) string {
-	switch msg.Role {
-	case schema.User:
-		return r.renderUserMessage(msg)
-	case schema.Assistant:
-		return r.renderAssistantMessage(msg)
-	case schema.System:
-		return r.renderSystemMessage(msg)
-	}
-	return ""
-}
-
-// renderMarkdown 渲染 Markdown 内容
-func (r *MessageRenderer) renderMarkdown(content string) string {
-	if r.markdownRenderer == nil {
-		return content
-	}
-	rendered, err := r.markdownRenderer.Render(content)
-	if err != nil {
-		// 渲染失败，返回原始内容
-		return content
-	}
-	// 去除首尾空白（glamour 会添加前后换行）
-	return strings.TrimSpace(rendered)
-}
-
-// renderUserMessage 渲染用户消息
-func (r *MessageRenderer) renderUserMessage(msg adk.Message) string {
-	if msg.Content == "" {
-		return ""
-	}
-	// 用户消息通常不需要 Markdown 渲染，保持原始文本
-	return r.styles.User.Render("User:") + " " + msg.Content
-}
-
-// renderAssistantMessage 渲染助手消息
-func (r *MessageRenderer) renderAssistantMessage(msg adk.Message) string {
-	var parts []string
-
-	// 渲染思考内容
-	if msg.ReasoningContent != "" {
-		header := r.styles.Thinking.Render("Thinking:")
-		// 使用斜体样式渲染思考内容
-		content := r.styles.Thinking.Render(msg.ReasoningContent)
-		parts = append(parts, header+"\n"+content)
-	}
-	// 渲染文本内容（支持 Markdown）
-	if msg.Content != "" {
-		header := r.styles.Assistant.Render("Assistant:")
-		renderedContent := r.renderMarkdown(msg.Content)
-		parts = append(parts, header+"\n"+renderedContent)
-	}
-
-	// 渲染工具调用
-	if len(msg.ToolCalls) > 0 {
-		if msg.Content == "" {
-			header := r.styles.Assistant.Render("Assistant:")
-			parts = append(parts, header)
-		}
-		toolCallsRendered := r.renderToolCalls(msg.ToolCalls)
-		parts = append(parts, toolCallsRendered)
-	}
-
-	if len(parts) == 0 {
-		return ""
-	}
-
-	return strings.Join(parts, "\n")
-}
-
-// renderSystemMessage 渲染系统消息
-func (r *MessageRenderer) renderSystemMessage(msg adk.Message) string {
-	if msg.Content == "" {
-		return ""
-	}
-	return r.styles.System.Render("System: " + msg.Content)
-}
-
-// renderToolCalls 渲染工具调用列表
-func (r *MessageRenderer) renderToolCalls(toolCalls []schema.ToolCall) string {
-	if len(toolCalls) == 0 {
-		return ""
-	}
-
-	var parts []string
-	for i, tc := range toolCalls {
-		renderedCall := r.renderToolCall(tc, i+1)
-		if renderedCall != "" {
-			parts = append(parts, renderedCall)
-		}
-	}
-
-	return strings.Join(parts, "\n")
-}
-
-// renderToolCall 渲染单个工具调用及结果
-func (r *MessageRenderer) renderToolCall(tc schema.ToolCall, index int) string {
-	// 使用工具渲染器
-	if r.toolRenderer != nil {
-		styles := &ToolStyles{
-			Indent:   r.styles.Indent,
-			Border:   r.styles.ToolBorder,
-			System:   r.styles.System,
-			Tool:     r.styles.Tool,
-			ToolName: r.styles.ToolName,
-		}
-		// 使用内部索引查找结果
-		getResult := func(id string) (string, bool) {
-			res, ok := r.toolResults[id]
-			return res, ok
-		}
-		return r.toolRenderer.RenderToolCall(tc, index, getResult, styles)
-	}
-
-	// 没有设置工具渲染器，返回简单提示
-	return r.styles.Indent.Render(
-		r.styles.ToolBorder.Render("┌─ ") +
-			r.styles.ToolName.Render(fmt.Sprintf("Tool Call #%d: %s", index, tc.Function.Name)) +
-			"\n" +
-			r.styles.ToolBorder.Render("│ ") +
-			r.styles.System.Render("(Tool renderer not configured)") +
-			"\n" +
-			r.styles.ToolBorder.Render("└─"),
-	)
 }
