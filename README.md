@@ -17,6 +17,7 @@ A learning project to explore:
   - **Information Retrieval**: Web Search (DuckDuckGo), Content Fetching, Summarization
   - **System Control**: PowerShell/Bash Command Execution
 - 🧠 **Knowledge Base**: Redis-based vector store for knowledge ingestion and retrieval
+    > ⚠️ **Note**: The Knowledge Base module is currently under active optimization and refactoring. APIs and storage formats may change.
 - 📡 **Event Driven**: Built-in PubSub system for asynchronous component communication
 - 🖥️ **Terminal UI**: Bubble Tea-based interactive TUI with multiple components (Input, List, Status)
 
