@@ -5,6 +5,8 @@
 *.dylib
 cowork-agent
 test_tutor.exe
+*.md
+*.png
 
 # Test files
 test_*.go

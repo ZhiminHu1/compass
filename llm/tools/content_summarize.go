@@ -66,7 +66,7 @@ Tone: Professional, objective, information-dense.
 
 // NewSummaryAgent 创建网页内容摘要 Agent
 func NewSummaryAgent(ctx context.Context) adk.Agent {
-	model, err := providers.CreateChatModel(ctx)
+	model, err := providers.CreateSummaryModel(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -88,6 +88,7 @@ func NewSummaryAgent(ctx context.Context) adk.Agent {
 					ErrorHandler(), // 使用统一的错误处理中间件
 				},
 			},
+			EmitInternalEvents: true,
 		},
 	})
 	if err != nil {

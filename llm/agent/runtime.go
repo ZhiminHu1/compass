@@ -177,7 +177,6 @@ func SetupRuntime(ctx context.Context) (*Runtime, error) {
 	vectorStore, embedder, err := initVectorStore(ctx)
 	if err != nil {
 		log.Printf("初始化向量存储失败: %v (知识库功能将被禁用)", err)
-		// Continue without vector store - knowledge tools will handle nil case
 	} else {
 		log.Println("向量存储已启用")
 	}

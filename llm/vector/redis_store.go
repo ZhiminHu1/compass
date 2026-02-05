@@ -138,12 +138,11 @@ func (s *RedisStore) ensureIndex(ctx context.Context) error {
 
 	// Create index with HNSW algorithm
 	dim := s.config.EmbeddingDim
-	ef := s.efConstruction
-	m := s.m
 
+	// Redis Stack 2.8+ format
 	// FT.CREATE cowork-knowledge
 	//   ON HASH PREFIX 1 "vec:"
-	//   SCHEMA vector VECTOR HNSW 6 TYPE FLOAT32 DIM 1024 DISTANCE_METRIC COSINE EF_CONSTRUCTION 200 M 16
+	//   SCHEMA vector VECTOR HNSW 6 TYPE FLOAT32 DIM 1024 DISTANCE_METRIC COSINE
 	//          content TEXT
 	//          source TAG
 	//          file_type TAG
@@ -159,8 +158,6 @@ func (s *RedisStore) ensureIndex(ctx context.Context) error {
 		"TYPE", "FLOAT32",
 		"DIM", strconv.Itoa(dim),
 		"DISTANCE_METRIC", "COSINE",
-		"EF_CONSTRUCTION", strconv.Itoa(ef),
-		"M", strconv.Itoa(m),
 		fieldContent, "TEXT",
 		fieldSource, "TAG",
 		fieldFileType, "TAG",
@@ -270,21 +267,15 @@ func decodeVector(data []byte) ([]float32, error) {
 
 // escapeTagValue escapes special characters in TAG field values
 func escapeTagValue(value string) string {
-	// Redis TAG fields use comma as separator, escape commas
-	// Also escape spaces if needed
-	return escapeTag(value)
-}
-
-// escapeTag escapes special TAG characters
-func escapeTag(s string) string {
-	// Replace commas with escaped version
-	// Replace spaces with underscores
-	result := s
-	for i, c := range result {
-		if c == ',' {
-			result = result[:i] + "\\," + result[i+1:]
-		}
-	}
+	// Redis TAG fields use comma as separator, escape commas and spaces
+	// Also escape other special characters: {}(),
+	result := strings.ReplaceAll(value, "\\", "\\\\")
+	result = strings.ReplaceAll(result, ",", "\\,")
+	result = strings.ReplaceAll(result, " ", "\\ ")
+	result = strings.ReplaceAll(result, "{", "\\{")
+	result = strings.ReplaceAll(result, "}", "\\}")
+	result = strings.ReplaceAll(result, "(", "\\(")
+	result = strings.ReplaceAll(result, ")", "\\)")
 	return result
 }
 
@@ -322,14 +313,13 @@ func (s *RedisStore) Search(ctx context.Context, query string, topK int) ([]llm.
 	indexName := s.config.IndexName
 
 	// Build the search query with KNN
-	queryStr := fmt.Sprintf("*=>[KNN %d @vector $query_vector AS score]", topK)
+	// Note: Don't use 'AS score' as it's deprecated in newer Redis Stack versions
+	queryStr := fmt.Sprintf("*=>[KNN %d @vector $vec]", topK)
 
 	result, err := s.client.Do(ctx, "FT.SEARCH", indexName, queryStr,
-		"PARAMS", "2", "query_vector", queryBytes,
+		"PARAMS", "2", "vec", queryBytes,
 		"RETURN", "6", fieldContent, fieldSource, fieldFileType, fieldTitle, fieldChunkIndex, fieldMetadata,
-		"SORTBY", "score",
 		"LIMIT", "0", strconv.Itoa(topK),
-		"NOCONTENT",
 	).Result()
 
 	if err != nil {

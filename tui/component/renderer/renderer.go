@@ -130,8 +130,8 @@ func (r *MessageRenderer) renderToolCalls(toolCalls []schema.ToolCall) string {
 func (r *MessageRenderer) renderToolCall(tc schema.ToolCall, index int) string {
 	resultJSON, ok := r.toolResults[tc.ID]
 	if !ok {
-		return r.theme.Minimal.Render(fmt.Sprintf("│ %s #%d: (%s) (no result)",
-			r.icons.Tool, index, tc.Function.Name))
+		return r.theme.Minimal.Render(fmt.Sprintf("│ %s #%d: (%s:%s) (no result)\n",
+			r.icons.Tool, index, tc.Function.Name, tc.Function.Arguments))
 	}
 
 	// 解析 ToolResult - 使用统一类型

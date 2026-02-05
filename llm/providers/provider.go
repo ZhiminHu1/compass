@@ -7,6 +7,7 @@ import (
 
 	openaiEmbed "github.com/cloudwego/eino-ext/components/embedding/openai"
 	openaiModel "github.com/cloudwego/eino-ext/components/model/openai"
+	"github.com/cloudwego/eino-ext/components/model/qwen"
 	einoEmbedding "github.com/cloudwego/eino/components/embedding"
 	"github.com/cloudwego/eino/components/model"
 )
@@ -38,9 +39,6 @@ func NewChatModel(ctx context.Context, config *ChatModelConfig) (model.ToolCalli
 		APIKey:  config.APIKey,
 		BaseURL: baseURL,
 		Model:   modelName,
-		ExtraFields: map[string]any{
-			"Stream": "true",
-		},
 	})
 }
 
@@ -61,6 +59,19 @@ func CreateChatModel(ctx context.Context) (model.ToolCallingChatModel, error) {
 		APIKey:  apiKey,
 		BaseURL: os.Getenv("BASE_URL"),
 		Model:   os.Getenv("MODEL"),
+	})
+}
+
+func CreateSummaryModel(ctx context.Context) (model.ToolCallingChatModel, error) {
+	apiKey := os.Getenv("SUMMARY_MODEL_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("API_KEY environment variable is required")
+	}
+
+	return qwen.NewChatModel(ctx, &qwen.ChatModelConfig{
+		APIKey:  apiKey,
+		BaseURL: os.Getenv("SUMMARY_MODEL_BASE_URL"),
+		Model:   os.Getenv("SUMMARY_MODEL"),
 	})
 }
 
