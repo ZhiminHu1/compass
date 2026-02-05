@@ -102,7 +102,7 @@ func FetchToolFunc(ctx context.Context, params FetchToolParams) (string, error) 
 	if err != nil {
 		return Error(fmt.Sprintf("failed to create request: %v", err))
 	}
-	req.Header.Set("User-Agent", "cowork-agent-fetch-tool/1.0")
+	req.Header.Set("User-Agent", "compass-fetch-tool/1.0")
 
 	// 4. Execute Request
 	startTime := time.Now()

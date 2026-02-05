@@ -6,11 +6,11 @@ import (
 	"log"
 	"os"
 
-	"cowork-agent/llm/parser"
-	"cowork-agent/llm/providers"
-	"cowork-agent/llm/tools"
-	"cowork-agent/llm/vector"
-	"cowork-agent/pubsub"
+	"compass/llm/parser"
+	"compass/llm/providers"
+	"compass/llm/tools"
+	"compass/llm/vector"
+	"compass/pubsub"
 
 	clc "github.com/cloudwego/eino-ext/callbacks/cozeloop"
 	"github.com/cloudwego/eino/adk"

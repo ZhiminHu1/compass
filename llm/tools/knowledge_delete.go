@@ -1,8 +1,8 @@
 package tools
 
 import (
+	"compass/llm"
 	"context"
-	"cowork-agent/llm"
 	"fmt"
 	"strings"
 

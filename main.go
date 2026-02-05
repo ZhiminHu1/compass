@@ -1,13 +1,13 @@
 package main
 
 import (
+	"compass/llm/agent"
 	"context"
 	"fmt"
 	"log"
 	"os"
 
-	"cowork-agent/llm/agent"
-	"cowork-agent/tui/chat"
+	"compass/tui/chat"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joho/godotenv"

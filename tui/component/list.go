@@ -1,8 +1,8 @@
 package component
 
 import (
-	"cowork-agent/pubsub"
-	"cowork-agent/tui/component/renderer"
+	"compass/pubsub"
+	"compass/tui/component/renderer"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"

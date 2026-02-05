@@ -1,8 +1,8 @@
 package vector
 
 import (
+	"compass/llm"
 	"context"
-	"cowork-agent/llm"
 )
 
 // VectorStore defines the interface for vector storage operations

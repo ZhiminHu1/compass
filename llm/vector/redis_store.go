@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"cowork-agent/llm"
+	"compass/llm"
 
 	"github.com/cloudwego/eino/components/embedding"
 	"github.com/redis/go-redis/v9"

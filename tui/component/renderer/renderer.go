@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"cowork-agent/llm/tools"
+	"compass/llm/tools"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"

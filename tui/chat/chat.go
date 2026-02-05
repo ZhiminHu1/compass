@@ -3,9 +3,9 @@ package chat
 import (
 	"context"
 
-	"cowork-agent/llm/agent"
-	"cowork-agent/pubsub"
-	"cowork-agent/tui/component"
+	"compass/llm/agent"
+	"compass/pubsub"
+	"compass/tui/component"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

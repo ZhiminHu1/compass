@@ -3,7 +3,7 @@ package component
 import (
 	"fmt"
 
-	"cowork-agent/pubsub"
+	"compass/pubsub"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"

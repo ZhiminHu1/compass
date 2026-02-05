@@ -1,8 +1,8 @@
 package tools
 
 import (
+	"compass/llm/providers"
 	"context"
-	"cowork-agent/llm/providers"
 	"log"
 
 	"github.com/cloudwego/eino/adk"

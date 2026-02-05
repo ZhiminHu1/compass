@@ -1,10 +1,10 @@
 package tools
 
 import (
+	"compass/llm"
+	"compass/llm/parser"
+	"compass/llm/vector"
 	"context"
-	"cowork-agent/llm"
-	"cowork-agent/llm/parser"
-	"cowork-agent/llm/vector"
 	"fmt"
 	"path/filepath"
 	"strings"
