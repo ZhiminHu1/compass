@@ -1,5 +1,8 @@
 # CoWork Agent
 
+[English](./README.md)
+
+
 > 一个基于 Go 的终端 AI 助手 Demo
 
 ## 简介

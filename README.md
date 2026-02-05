@@ -1,5 +1,8 @@
 # CoWork Agent
 
+[中文文档](./README_zh.md)
+
+
 > A terminal AI assistant demo built with Go
 
 ## Description
